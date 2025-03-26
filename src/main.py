@@ -58,7 +58,8 @@ async def post_single_article():
         sys.exit(0)
 
 if __name__ == "__main__":
-    logger.info("ThreadsPoster 開始運行")
+    config = Config()
+    logger.info(f"ThreadsPoster v{config.VERSION} ({config.LAST_UPDATED}) 開始運行")
     
     # 執行發文
     asyncio.run(post_single_article()) 

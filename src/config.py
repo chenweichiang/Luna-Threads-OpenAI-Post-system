@@ -11,6 +11,10 @@ from typing import Dict, Any
 class Config:
     """設定檔類別"""
     
+    # 版本資訊
+    VERSION = "1.0.0"
+    LAST_UPDATED = "2024/03/27"
+    
     def __init__(self):
         """初始化設定"""
         # 載入環境變數
