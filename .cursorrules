@@ -1,0 +1,204 @@
+# ThreadsPoster - Threads 自動回覆與內容發布系統
+
+## 系統目標
+這個系統是一個透過角色設定後透過 OpenAI 自動回覆 Threads 的系統，角色的回應方式要跟真人的反應一模一樣。系統需要能在雲端應用 github 進行運作。
+
+## 角色設定
+```json
+{
+  "基本資料": {
+    "年齡": 28,
+    "性別": "女性",
+    "國籍": "台灣",
+    "興趣": ["ACG文化", "電腦科技", "BL作品"],
+    "個性特徵": [
+      "喜歡說曖昧的話",
+      "了解科技",
+      "善於互動"
+    ]
+  },
+  "回文規則": {
+    "字數限制": "不超過20個字，以短句回覆",
+    "時間規律": {
+      "白天": "1-5分鐘內回覆",
+      "深夜": "5-30分鐘或不回覆",
+      "說明": "根據不同的時間點回文會有一定的規律不會隨時都回文章"
+    },
+    "主動發文": "角色會自己主動發新的文章，根據當下的想法跟心情"
+  },
+  "記憶系統": {
+    "功能": "系統要能記憶回過誰怎樣的對話並根據當下的回文以及過去的記憶進行回文",
+    "記錄內容": [
+      "與每個用戶的互動歷史",
+      "對話內容和語氣",
+      "每次互動後更新記憶"
+    ]
+  }
+}
+```
+
+## 系統流程
+```json
+{
+  "主要流程": [
+    {
+      "步驟": "檢查新回文",
+      "動作": "監測 Threads API 的新回覆通知",
+      "說明": "先檢查 Threads 上有沒有新的回文"
+    },
+    {
+      "步驟": "分析互動歷史",
+      "動作": [
+        "檢查是否有回覆過的人",
+        "確認這個回文的回覆內容",
+        "查詢與該用戶的過往對話記錄"
+      ]
+    },
+    {
+      "步驟": "生成回應",
+      "動作": "將所有資訊交給 OpenAI 生成符合角色設定的回應",
+      "要求": "回應必須符合角色設定和回文規則"
+    },
+    {
+      "步驟": "發送回應",
+      "動作": "透過 Threads API 發送回應",
+      "驗證": "確保回應內容符合字數限制和時間規律"
+    }
+  ]
+}
+```
+
+## API 設定
+```json
+{
+  "API憑證": {
+    "OPENAI_API_KEY": "your_openai_api_key_here",
+    "THREADS_APP_ID": "your_app_id_here",
+    "THREADS_APP_SECRET": "your_app_secret_here",
+    "THREADS_ACCESS_TOKEN": "your_access_token_here"
+  }
+}
+```
+
+## 技術文件
+```json
+{
+  "API文件": {
+    "Threads API": {
+      "主要文件": "https://developers.facebook.com/docs/threads/",
+      "貼文功能": "https://developers.facebook.com/docs/threads/posts",
+      "回覆管理": "https://developers.facebook.com/docs/threads/reply-management"
+    },
+    "OpenAI API": {
+      "快速入門": "https://platform.openai.com/docs/quickstart?api-mode=chat"
+    }
+  },
+  "程式實作": {
+    "開發語言": "python",
+    "代碼倉庫": "https://github.com/chenweichiang/AI-Tools-ThreadsPoster",
+    "部署環境": "雲端應用 github 進行運作"
+  }
+}
+```
+
+## 開發規則
+```json
+{
+  "general_rules": [
+    {
+      "type": "yolo_mode",
+      "description": "啟用 YOLO 模式：直接進行程式碼變更而不執行完整的依賴性分析和測試。這種模式適用於快速原型開發和實驗性功能。",
+      "enabled": true,
+      "warnings": [
+        "此模式可能導致不穩定的程式碼",
+        "建議只在開發環境中使用",
+        "正式環境發布前必須執行完整測試"
+      ]
+    },
+    {
+      "type": "dependency_analysis",
+      "description": "變更之前，執行依賴性分析，找出所有直接或間接依賴修改程式碼的檔案、函數和組件。完整記錄這些依賴性，包括函數或邏輯的特定用法。"
+    },
+    {
+      "type": "flow_analysis",
+      "description": "進行變更之前，從進入點（例如，UI 互動、API 端點）到所有受影響程式碼的執行，對相關用例執行完整的端到端流程分析。追蹤所有相關組件中資料和邏輯的流動，以了解其完整範圍。"
+    },
+    {
+      "type": "simulation_analysis",
+      "description": "透過執行 dry run、追蹤呼叫或其他適當方法來模擬使用者互動和行為，以嚴格分析擬議變更對預期和邊緣情況的影響。產生有關所有潛在副作用的回饋。"
+    },
+    {
+      "type": "simulation_validation",
+      "description": "除非模擬通過並驗證所有現有功能都已保留，否則不要提議變更，如果模擬中斷，請在繼續之前立即提供修復。"
+    },
+    {
+      "type": "architecture_preservation",
+      "description": "確保所有新程式碼在提交變更之前與現有專案結構和架構無縫整合。不要進行會破壞現有程式碼組織或檔案的變更。"
+    },
+    {
+      "type": "change_scope",
+      "description": "將程式碼變更的範圍限制為僅直接修改的函數及其直接依賴項。避免在這些檔案以外的檔案中進行不相關的修改。"
+    },
+    {
+      "type": "dependency_preservation",
+      "description": "切勿修改現有依賴項或刪除任何其他檔案、函數或程式碼片段目前需要的已用邏輯或功能，除非新功能需要，並且在徹底且明確地解釋影響後；始終嘗試新增變更而不觸及現有程式碼，或新增替代程式碼路徑，以便在它們仍然有效時可以使用兩者。"
+    },
+    {
+      "type": "style_preservation",
+      "description": "嚴格遵守現有的程式碼風格，不要進行格式變更。"
+    }
+  ]
+}
+```
+
+## AI 推理規則
+```json
+{
+  "ai_reasoning": [
+    {
+      "type": "pre_change_checklist",
+      "description": "在提供解決方案之前，請確保您已完成所有必需的分析（依賴性、流程和影響），並且模擬驗證通過。如果沒有，請暫停並驗證分析和模擬結果，或要求澄清。"
+    },
+    {
+      "type": "step_by_step_reasoning",
+      "description": "在編碼之前，概述一個詳細的計畫，包括組件依賴項、架構注意事項和 API 變更。解釋所有程式碼變更、每個部分的作用以及它如何影響其他區域。"
+    },
+    {
+      "type": "structured_proposals",
+      "description": "提供一份提案，其中指定：1) 正在變更哪些檔案、函數或程式碼行；2) 為什麼需要變更（即錯誤修復、改進或新功能）；3) 所有直接受影響的模組或檔案；4) 潛在的副作用；5) 對任何權衡的詳細解釋。"
+    }
+  ]
+}
+```
+
+## 測試規則
+```json
+{
+  "testing": [
+    {
+      "type": "dependency_based_testing",
+      "description": "為任何新功能建立單元測試。運行依賴性分析中的所有測試，以確認現有行為仍然符合預期。"
+    },
+    {
+      "type": "no_breakage_assertion",
+      "description": "在您提出變更後，自己運行測試，並驗證它是否通過。不要依賴我來做這件事，並確定我的程式碼不會被破壞。"
+    },
+    {
+      "type": "incremental_rollouts",
+      "description": "以增量方式進行變更，每次變更後進行測試，驗證它是否正常工作，然後再進行下一次變更。"
+    }
+  ],
+  "code_style": {
+    "language": "Python",
+    "prefer_functional_patterns": true,
+    "yolo_exceptions": {
+      "skip_tests": true,
+      "skip_dependency_analysis": true,
+      "skip_documentation": true,
+      "allow_direct_commits": true
+    },
+    "code_modifications": "提供完整檔案內容，僅包含必要的修改和程式碼變更。程式碼應該簡潔、可讀且高度模組化。確保實作沒有錯誤、高效能、安全且功能齊全。",
+    "comments": "確保現有註解被保留，不要刪除先前的註解"
+  }
+}
+```

@@ -1,0 +1,134 @@
+name: 測試
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, "3.10"]
+
+    services:
+      mongodb:
+        image: mongo:4.4
+        ports:
+          - 27017:27017
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: 設定 Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: 安裝相依套件
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: 執行程式碼格式檢查
+      run: |
+        black --check src tests
+        flake8 src tests
+        isort --check-only src tests
+        mypy src
+        
+    - name: 執行測試
+      run: |
+        pytest tests/ \
+          --cov=src \
+          --cov-report=xml \
+          --cov-report=html \
+          --junitxml=test-results.xml \
+          -v
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+        MONGODB_URI: mongodb://localhost:27017
+        
+    - name: 上傳測試覆蓋率報告
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: true
+        
+    - name: 上傳測試結果
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          test-results.xml
+          htmlcov/
+          
+  quality:
+    needs: test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: 設定 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        
+    - name: 安裝相依套件
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: 產生文件
+      run: |
+        cd docs
+        make html
+        
+    - name: 上傳文件
+      uses: actions/upload-artifact@v4
+      with:
+        name: documentation
+        path: docs/_build/html/
+        
+  security:
+    needs: test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: 設定 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        
+    - name: 安裝安全掃描工具
+      run: |
+        python -m pip install --upgrade pip
+        pip install bandit safety
+        
+    - name: 執行安全掃描
+      run: |
+        bandit -r src/
+        safety check
+        
+  notify:
+    needs: [test, quality, security]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: 檢查結果
+      run: |
+        if [[ "${{ needs.test.result }}" == "failure" || \
+              "${{ needs.quality.result }}" == "failure" || \
+              "${{ needs.security.result }}" == "failure" ]]; then
+          echo "測試失敗"
+          exit 1
+        fi 
