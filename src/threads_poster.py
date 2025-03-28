@@ -4,27 +4,31 @@ ThreadsPoster - Threads 自動回覆與內容發布系統
 
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from typing import Dict, List, Optional, Any
 import random
 from pathlib import Path
 import asyncio
+import pytz
 
 from src.config import Config
 from src.threads_api import ThreadsAPI
+from src.ai_handler import AIHandler
+from src.database import Database
 
 class ThreadsPoster:
-    """Threads 自動回覆系統"""
+    """Threads 自動發文系統"""
     
-    def __init__(self, config: Config):
-        """初始化系統
-
-        Args:
-            config (Config): 設定檔
-        """
-        self.config = config
-        self.api = ThreadsAPI(config)
+    def __init__(self, config_path: str = "config/character_config.json"):
+        """初始化 ThreadsPoster"""
+        self.config = self._load_config(config_path)
+        self.ai_handler = AIHandler()
+        self.threads_api = ThreadsAPI()
+        self.db = Database()
+        self.last_post_time = datetime.now(pytz.UTC) - timedelta(hours=24)
+        self._test_mode = False
+        self.logger = logging.getLogger(__name__)
         self.user_info = None
         self.memory_file = Path("data/memory.json")
         self.memory = self._load_memory()
@@ -38,6 +42,15 @@ class ThreadsPoster:
                 logging.StreamHandler()
             ]
         )
+        
+    def _load_config(self, config_path: str) -> dict:
+        """載入配置檔案"""
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logging.error(f"載入配置檔案失敗：{str(e)}")
+            return {}
         
     def _load_memory(self) -> Dict:
         """載入記憶檔案"""
@@ -71,159 +84,129 @@ class ThreadsPoster:
         })
         self._save_memory()
         
-    def _should_reply_now(self) -> bool:
-        """判斷是否應該立即回覆
-
-        Returns:
-            bool: 是否應該回覆
-        """
-        current_hour = datetime.now().hour
+    async def initialize(self):
+        """初始化系統"""
+        await self.db.connect()
+        self.logger.info("系統初始化完成")
         
-        # 深夜時間（23:00-06:00）
-        if current_hour >= 23 or current_hour < 6:
-            return random.random() < 0.2  # 20% 機率回覆
-            
-        # 白天時間
-        return random.random() < 0.8  # 80% 機率回覆
-        
-    def _generate_reply(self, username: str, text: str) -> str:
-        """生成回覆內容
-
-        Args:
-            username (str): 用戶名稱
-            text (str): 原始訊息
-
-        Returns:
-            str: 回覆內容
-        """
-        # 根據用戶互動歷史生成回覆
-        user_history = self.memory["users"].get(username, {}).get("interactions", [])
-        
-        # 如果是第一次互動
-        if not user_history:
-            return f"你好 {username}！很高興認識你 💕"
-            
-        # 根據之前的互動生成回覆
-        return f"謝謝你的回覆，{username}！"
-        
-    async def initialize(self) -> bool:
-        """初始化系統
-
-        Returns:
-            bool: 是否初始化成功
-        """
         # 檢查用戶權限
-        self.user_info = await self.api.get_user_info()
+        self.user_info = await self.threads_api.get_user_info()
         if not self.user_info:
-            logging.error("無法獲取用戶資訊")
+            self.logger.error("無法獲取用戶資訊")
             return False
             
-        logging.info(f"用戶名稱: {self.user_info.get('username')}")
-        logging.info(f"用戶 ID: {self.user_info.get('id')}")
+        self.logger.info(f"用戶名稱: {self.user_info.get('username')}")
+        self.logger.info(f"用戶 ID: {self.user_info.get('id')}")
         
         # 檢查發布限制
-        limit_info = await self.api.get_publishing_limit()
+        limit_info = await self.threads_api.get_publishing_limit()
         if not limit_info:
-            logging.error("無法獲取發布限制資訊")
+            self.logger.error("無法獲取發布限制資訊")
             return False
             
-        logging.info(f"已使用 {limit_info.get('quota_usage', 0)} / {limit_info.get('quota_total', 0)} 則貼文")
+        self.logger.info(f"已使用 {limit_info.get('quota_usage', 0)} / {limit_info.get('quota_total', 0)} 則貼文")
         return True
         
-    async def check_and_reply(self):
-        """檢查並回覆貼文"""
-        try:
-            # 獲取最新的貼文
-            posts = await self.api.get_user_posts(limit=25)
-            if not posts:
-                logging.warning("無法獲取貼文")
-                return
-                
-            logging.info(f"成功獲取 {len(posts)} 則貼文")
-            
-            # 檢查每個貼文的回覆
-            for post in posts:
-                post_id = post.get("id")
-                logging.info(f"檢查貼文 {post_id} 的回覆...")
-                
-                # 獲取回覆
-                post_replies = await self.api.get_post_replies(post_id)
-                if not post_replies:
-                    continue
-                    
-                logging.info(f"找到 {len(post_replies)} 則回覆")
-                
-                # 處理每個回覆
-                for reply in post_replies:
-                    reply_id = reply.get("id")
-                    username = reply.get("username")
-                    text = reply.get("text")
-                    
-                    # 檢查是否已經回覆過
-                    if reply_id in self.memory["replies"]:
-                        continue
-                        
-                    # 如果是自己的回覆則跳過
-                    if username == self.user_info.get("username"):
-                        continue
-                        
-                    # 判斷是否要立即回覆
-                    if not self._should_reply_now():
-                        logging.info(f"暫時不回覆 {username} 的訊息")
-                        continue
-                        
-                    # 生成回覆
-                    reply_text = self._generate_reply(username, text)
-                    
-                    # 建立回覆
-                    new_reply_id = await self.api.create_reply(reply_id, reply_text)
-                    if new_reply_id:
-                        logging.info(f"成功回覆 {username}，回覆 ID: {new_reply_id}")
-                        
-                        # 更新記憶
-                        self._update_user_memory(username, {
-                            "type": "reply",
-                            "original_text": text,
-                            "reply_text": reply_text,
-                            "post_id": post_id,
-                            "reply_id": reply_id
-                        })
-                        
-                        self.memory["replies"][reply_id] = {
-                            "timestamp": datetime.now().isoformat(),
-                            "username": username,
-                            "text": reply_text
-                        }
-                        self._save_memory()
-                    else:
-                        logging.error(f"回覆 {username} 失敗")
-                        
-        except Exception as e:
-            logging.error(f"檢查回覆時發生錯誤: {str(e)}")
-            
-    async def run(self):
-        """執行系統"""
-        if not await self.initialize():
-            return
-            
-        check_interval = 30  # 檢查間隔（秒）
+    async def _should_reply_now(self) -> bool:
+        """判斷是否應該回覆"""
+        current_hour = datetime.now().hour
         
+        # 深夜時間（0-6點）降低回覆機率
+        if 0 <= current_hour < 6:
+            return random.random() < 0.2  # 20% 機率回覆
+        
+        return random.random() < 0.8  # 80% 機率回覆
+        
+    async def _generate_reply(self, username: str, message: str) -> str:
+        """生成回覆內容"""
+        # 獲取用戶歷史對話
+        history = await self.db.get_user_conversation_history(username)
+        
+        # 生成回覆
+        reply = await self.ai_handler.generate_response(message, history)
+        
+        # 更新對話歷史
+        await self.db.update_user_history(username, message, reply)
+        
+        return reply
+        
+    async def process_new_replies(self):
+        """處理新的回覆"""
         try:
-            while True:
-                logging.info(f"\n=== 檢查回覆（{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）===")
-                await self.check_and_reply()
-                logging.info(f"\n等待 {check_interval} 秒後再次檢查...")
-                await asyncio.sleep(check_interval)
+            self.logger.info("正在獲取新回覆")
+            replies = await self.threads_api.get_new_replies()
+            
+            if not replies:
+                self.logger.info("沒有新的回覆")
+                return
+            
+            for reply in replies:
+                if not await self._should_reply_now():
+                    self.logger.info(f"決定不回覆 {reply['username']} 的訊息")
+                    continue
                 
-        except KeyboardInterrupt:
-            logging.info("\n程式已停止")
+                response = await self._generate_reply(reply['username'], reply['text'])
+                if response:
+                    success = await self.threads_api.reply_to_post(reply['id'], response)
+                    if success:
+                        self.logger.info(f"成功回覆 {reply['username']}")
+                    else:
+                        self.logger.error(f"回覆 {reply['username']} 失敗")
+        
         except Exception as e:
-            logging.error(f"\n發生錯誤: {str(e)}")
-        finally:
-            self._save_memory()
-            logging.info("系統關閉")
+            self.logger.error(f"處理回覆時發生錯誤：{str(e)}")
+            if not self._test_mode:
+                raise
+        
+    async def generate_new_post(self):
+        """生成並發布新貼文"""
+        try:
+            # 檢查是否應該發布新貼文
+            time_since_last_post = (datetime.now(pytz.UTC) - self.last_post_time).total_seconds() / 3600
+            
+            if time_since_last_post < self.config.POST_INTERVAL_HOURS:
+                return
+            
+            content = await self.ai_handler.generate_new_post()
+            if not content:
+                return
+            
+            max_retries = 3
+            retry_delay = 5
+            
+            for attempt in range(max_retries):
+                if await self.threads_api.create_post(content):
+                    self.last_post_time = datetime.now(pytz.UTC)
+                    self.logger.info("成功發布新貼文")
+                    return
+                
+                if attempt < max_retries - 1:
+                    retry_delay *= 2
+                    self.logger.warning(f"發布失敗，{retry_delay} 秒後重試")
+                    await asyncio.sleep(retry_delay)
+            
+            self.logger.error("發布新貼文失敗，已達最大重試次數")
+        
+        except Exception as e:
+            self.logger.error(f"生成新貼文時發生錯誤：{str(e)}")
+            if not self._test_mode:
+                raise
+        
+    async def run(self):
+        """執行主程序"""
+        try:
+            await self.initialize()
+            
+            while True:
+                await self.process_new_replies()
+                await self.generate_new_post()
+                await asyncio.sleep(self.config.CHECK_INTERVAL)
+        
+        except Exception as e:
+            self.logger.error(f"執行過程中發生錯誤：{str(e)}")
+            if not self._test_mode:
+                raise
 
 if __name__ == "__main__":
-    config = Config()
-    poster = ThreadsPoster(config)
+    poster = ThreadsPoster()
     asyncio.run(poster.run()) 
