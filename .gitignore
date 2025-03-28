@@ -60,4 +60,4 @@ htmlcov/
 *.bak
 *.tmp
 *.temp
-.cache/ 
+.cache/ .cursorrules
