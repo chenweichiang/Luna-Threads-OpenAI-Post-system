@@ -1,3 +1,5 @@
+![Luna](luna.png)
+
 # ThreadsPoster - Threads 自動回覆與內容發布系統
 
 [![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/chenweichiang/AI-Tools-ThreadsPoster)
