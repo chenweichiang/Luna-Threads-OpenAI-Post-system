@@ -1,3 +1,15 @@
+"""
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 記憶檢查工具，用於檢視和診斷系統的記憶狀態
+Last Modified: 2024.03.30
+Changes:
+- 優化記憶檢查邏輯
+- 改進錯誤處理機制
+- 加強日誌記錄
+- 優化資料顯示格式
+"""
+
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 

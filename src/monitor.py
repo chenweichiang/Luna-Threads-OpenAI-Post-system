@@ -1,221 +1,120 @@
 """
 Version: 2024.03.30
 Author: ThreadsPoster Team
-Description: 監控模組，負責系統運行狀態監控和日誌記錄
+Description: 監控器類別，負責協調系統各個組件的運作
 Last Modified: 2024.03.30
 Changes:
-- 優化監控邏輯
+- 實現基本監控功能
+- 加強錯誤處理
 - 改進日誌記錄
-- 加強異常監控
-- 優化性能指標
-- 改進資源監控
 """
 
 import logging
-import time
-from collections import defaultdict
+import asyncio
 from datetime import datetime
-import pytz
-from typing import Dict, List, Any, Optional
-import json
-from pathlib import Path
+from typing import Optional
 
-class PerformanceMonitor:
-    """性能監控器"""
-    
-    def __init__(self, timezone: str = "Asia/Taipei"):
-        self.metrics = defaultdict(list)
-        self.start_times = {}
-        self.logger = logging.getLogger(__name__)
-        self.timezone = pytz.timezone(timezone)
-        self.metrics_file = Path("logs/metrics.json")
-        self.metrics_file.parent.mkdir(exist_ok=True)
-        
-        # 載入歷史指標
-        self._load_metrics()
-        
-    def _load_metrics(self):
-        """載入歷史性能指標"""
-        try:
-            if self.metrics_file.exists():
-                with open(self.metrics_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    for key, values in data.items():
-                        self.metrics[key].extend(values)
-        except Exception as e:
-            self.logger.error(f"載入性能指標失敗：{str(e)}")
-            
-    def save_metrics(self):
-        """儲存性能指標"""
-        try:
-            with open(self.metrics_file, "w", encoding="utf-8") as f:
-                json.dump(dict(self.metrics), f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            self.logger.error(f"儲存性能指標失敗：{str(e)}")
-            
-    def start_operation(self, operation_name: str):
-        """開始追蹤操作時間
-        
-        Args:
-            operation_name: 操作名稱
-        """
-        self.start_times[operation_name] = time.time()
-        
-    def end_operation(self, operation_name: str):
-        """結束追蹤操作時間並記錄
-        
-        Args:
-            operation_name: 操作名稱
-        """
-        if operation_name in self.start_times:
-            duration = time.time() - self.start_times[operation_name]
-            self.record_metric(f"{operation_name}_duration", duration)
-            del self.start_times[operation_name]
-            
-    def record_metric(self, name: str, value: float):
-        """記錄性能指標
-        
-        Args:
-            name: 指標名稱
-            value: 指標值
-        """
-        timestamp = datetime.now(self.timezone).isoformat()
-        self.metrics[name].append({
-            "timestamp": timestamp,
-            "value": value
-        })
-        
-    def get_metrics_summary(self) -> Dict[str, Dict[str, float]]:
-        """獲取性能指標摘要
-        
-        Returns:
-            Dict: 包含各指標的統計資訊
-        """
-        summary = {}
-        for name, values in self.metrics.items():
-            if values:
-                numeric_values = [v["value"] for v in values]
-                summary[name] = {
-                    "min": min(numeric_values),
-                    "max": max(numeric_values),
-                    "avg": sum(numeric_values) / len(numeric_values),
-                    "count": len(numeric_values)
-                }
-        return summary
-        
-    def cleanup_old_metrics(self, days: int = 30):
-        """清理舊的性能指標
-        
-        Args:
-            days: 保留天數
-        """
-        current_time = datetime.now(self.timezone)
-        for name in list(self.metrics.keys()):
-            self.metrics[name] = [
-                metric for metric in self.metrics[name]
-                if (current_time - datetime.fromisoformat(metric["timestamp"])).days < days
-            ]
-        self.save_metrics()
+from src.database import DatabaseHandler
+from src.threads_handler import ThreadsHandler
+from src.ai_handler import AIHandler
+from src.time_controller import TimeController
 
-class SystemMonitor:
-    """系統監控器"""
+class Monitor:
+    """監控器類別"""
     
-    def __init__(self, config_path: str = ".env"):
-        self.logger = logging.getLogger(__name__)
-        self.alerts = []
-        self.config_path = config_path
-        self.performance = PerformanceMonitor()
+    def __init__(
+        self,
+        db: DatabaseHandler,
+        threads_handler: ThreadsHandler,
+        ai_handler: AIHandler,
+        time_controller: TimeController,
+        max_daily_posts: int = 999
+    ):
+        """初始化監控器
         
-    def check_api_keys(self) -> bool:
-        """檢查 API 金鑰設定
-        
-        Returns:
-            bool: 是否所有必要的 API 金鑰都已設定
+        Args:
+            db: 資料庫處理器
+            threads_handler: Threads 處理器
+            ai_handler: AI 處理器
+            time_controller: 時間控制器
+            max_daily_posts: 每日最大發文數量
         """
+        self.db = db
+        self.threads_handler = threads_handler
+        self.ai_handler = ai_handler
+        self.time_controller = time_controller
+        self.max_daily_posts = max_daily_posts
+        self.logger = logging.getLogger(__name__)
+        self.is_running = False
+        
+    async def start(self):
+        """開始監控"""
+        self.is_running = True
+        self.logger.info("監控器開始運作")
+        
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
-                content = f.read()
-                required_keys = [
-                    "OPENAI_API_KEY",
-                    "THREADS_ACCESS_TOKEN",
-                    "THREADS_APP_ID",
-                    "THREADS_APP_SECRET"
-                ]
-                
-                for key in required_keys:
-                    if key not in content or f"{key}=" in content:
-                        self.add_alert("error", f"缺少必要的 API 金鑰：{key}")
-                        return False
+            while self.is_running:
+                try:
+                    # 檢查今日發文數量
+                    post_count = await self.db.get_today_posts_count()
+                    if post_count >= self.max_daily_posts:
+                        self.logger.info("已達到今日發文上限")
+                        await asyncio.sleep(3600)  # 休息一小時
+                        continue
                         
-            return True
-        except Exception as e:
-            self.add_alert("error", f"檢查 API 金鑰時發生錯誤：{str(e)}")
-            return False
-            
-    def check_memory_usage(self) -> Dict[str, Any]:
-        """檢查記憶體使用情況
-        
-        Returns:
-            Dict: 記憶體使用資訊
-        """
-        try:
-            memory_info = {}
-            
-            # 檢查記憶檔案大小
-            memory_file = Path("memory/interactions.json")
-            if memory_file.exists():
-                memory_info["file_size"] = memory_file.stat().st_size / 1024  # KB
-                
-                if memory_info["file_size"] > 1024:  # 如果大於 1MB
-                    self.add_alert("warning", "記憶檔案大小超過 1MB，建議進行清理")
+                    # 檢查是否需要發文
+                    next_post_time = await self.time_controller.get_next_post_time()
+                    if next_post_time > datetime.now(self.time_controller.timezone):
+                        wait_seconds = (next_post_time - datetime.now(self.time_controller.timezone)).total_seconds()
+                        self.logger.info(f"等待下一次發文時間，休息 {wait_seconds} 秒")
+                        await asyncio.sleep(wait_seconds)
+                        continue
+                        
+                    # 生成並發布內容
+                    content, topics, sentiment = await self.ai_handler.generate_content()
+                    if not content:
+                        self.logger.error("內容生成失敗")
+                        await asyncio.sleep(300)  # 休息5分鐘
+                        continue
+                        
+                    # 發布貼文
+                    post_id = await self.threads_handler.post_content(content)
+                    if not post_id:
+                        self.logger.error("貼文發布失敗")
+                        await asyncio.sleep(300)  # 休息5分鐘
+                        continue
+                        
+                    # 儲存文章
+                    article = {
+                        "post_id": post_id,
+                        "content": content,
+                        "topics": topics,
+                        "sentiment": sentiment,
+                        "created_at": datetime.now(self.time_controller.timezone)
+                    }
+                    await self.db.save_article(article)
                     
-            # 檢查記錄數量
-            if memory_file.exists():
-                with open(memory_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    memory_info["record_count"] = sum(len(records) for records in data.values())
+                    # 增加發文計數
+                    await self.db.increment_post_count()
                     
-            return memory_info
+                    # 更新下一次發文時間
+                    await self.time_controller.update_next_post_time()
+                    
+                    self.logger.info(f"發文成功：{content[:30]}...")
+                    
+                except Exception as e:
+                    self.logger.error(f"監控過程中發生錯誤：{str(e)}")
+                    await asyncio.sleep(300)  # 休息5分鐘
+                    
+        except asyncio.CancelledError:
+            self.logger.info("監控器收到取消信號")
         except Exception as e:
-            self.add_alert("error", f"檢查記憶體使用時發生錯誤：{str(e)}")
-            return {}
+            self.logger.error(f"監控器發生嚴重錯誤：{str(e)}")
+        finally:
+            self.is_running = False
+            self.logger.info("監控器停止運作")
             
-    def add_alert(self, level: str, message: str):
-        """添加警告訊息
-        
-        Args:
-            level: 警告等級 (info/warning/error)
-            message: 警告訊息
-        """
-        timestamp = datetime.now(pytz.UTC).isoformat()
-        self.alerts.append({
-            "timestamp": timestamp,
-            "level": level,
-            "message": message
-        })
-        
-        # 根據等級記錄日誌
-        if level == "error":
-            self.logger.error(message)
-        elif level == "warning":
-            self.logger.warning(message)
-        else:
-            self.logger.info(message)
-            
-    def get_system_status(self) -> Dict[str, Any]:
-        """獲取系統狀態摘要
-        
-        Returns:
-            Dict: 系統狀態資訊
-        """
-        return {
-            "api_keys_valid": self.check_api_keys(),
-            "memory_usage": self.check_memory_usage(),
-            "performance_metrics": self.performance.get_metrics_summary(),
-            "recent_alerts": self.alerts[-10:] if self.alerts else []
-        }
-        
-    def cleanup(self):
-        """清理系統資源"""
-        self.performance.cleanup_old_metrics()
-        self.alerts = [] 
+    async def stop(self):
+        """停止監控"""
+        self.is_running = False
+        self.logger.info("監控器準備停止") 

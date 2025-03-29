@@ -1,3 +1,15 @@
+"""
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: OAuth 伺服器模組，負責處理 Threads API 的認證流程
+Last Modified: 2024.03.30
+Changes:
+- 實現基本 OAuth 功能
+- 加強錯誤處理
+- 改進日誌記錄
+- 優化 SSL 設定
+"""
+
 from flask import Flask, request
 import os
 import requests

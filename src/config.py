@@ -12,10 +12,11 @@ Changes:
 """
 
 import os
+import json
 import pytz
 import logging
 from dotenv import load_dotenv
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Optional
 from datetime import datetime, time
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,13 @@ class Config:
         # 基本設定
         self.TIMEZONE = pytz.timezone("Asia/Taipei")  # 直接使用固定時區
         self.LOG_LEVEL = kwargs.get("LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO"))
+        
+        # 日誌配置
+        self.LOG_DIR = "logs"
+        self.LOG_FILE = "threads_poster.log"
+        self.LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        self.LOG_MAX_BYTES = 10 * 1024 * 1024  # 10MB
+        self.LOG_BACKUP_COUNT = 5
         
         # 處理日誌路徑
         log_path = kwargs.get("LOG_PATH", os.getenv("LOG_PATH", "logs/threads_poster.log"))
@@ -293,6 +301,47 @@ class Config:
             },
             "prime_time_ratio": self.PRIME_TIME_POST_RATIO
         }
+
+    def to_dict(self) -> Dict[str, Any]:
+        """將配置轉換為字典格式
+        
+        Returns:
+            Dict[str, Any]: 配置字典
+        """
+        return {
+            key: value for key, value in self.__dict__.items()
+            if not key.startswith('_')
+        }
+        
+    def from_dict(self, config_dict: Dict[str, Any]):
+        """從字典載入配置
+        
+        Args:
+            config_dict: 配置字典
+        """
+        for key, value in config_dict.items():
+            if hasattr(self, key):
+                setattr(self, key, value)
+                
+    def save_to_file(self, filepath: str):
+        """儲存配置到檔案
+        
+        Args:
+            filepath: 檔案路徑
+        """
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(self.to_dict(), f, indent=4, ensure_ascii=False)
+            
+    def load_from_file(self, filepath: str):
+        """從檔案載入配置
+        
+        Args:
+            filepath: 檔案路徑
+        """
+        if os.path.exists(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                config_dict = json.load(f)
+                self.from_dict(config_dict)
 
 # 創建全局配置實例
 config = Config()

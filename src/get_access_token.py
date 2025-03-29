@@ -1,3 +1,15 @@
+"""
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 存取權杖獲取模組，負責處理 Threads API 的存取權杖獲取流程
+Last Modified: 2024.03.30
+Changes:
+- 實現基本權杖獲取功能
+- 加強錯誤處理
+- 改進日誌記錄
+- 優化權杖存取流程
+"""
+
 import os
 import logging
 import json

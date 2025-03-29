@@ -1,3 +1,15 @@
+"""
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: Threads 認證模組，負責處理 Threads API 的認證流程
+Last Modified: 2024.03.30
+Changes:
+- 實現基本認證功能
+- 加強錯誤處理
+- 改進日誌記錄
+- 優化認證流程
+"""
+
 import os
 import logging
 import webbrowser

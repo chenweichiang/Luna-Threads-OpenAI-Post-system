@@ -1,7 +1,14 @@
 """
-ThreadsPoster 工具函數
-Version: 1.0.0
-Last Updated: 2025-03-29
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 工具函數模組，提供各種通用功能
+Last Modified: 2024.03.30
+Changes:
+- 優化文本處理功能
+- 改進時間處理邏輯
+- 加強錯誤處理
+- 統一日誌路徑
+- 優化配置讀取
 """
 
 import json

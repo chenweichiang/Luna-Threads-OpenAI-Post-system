@@ -9,6 +9,9 @@ Changes:
 - 加強人設記憶整合
 - 優化 token 使用量記錄
 - 改進日誌路徑設定
+- 加入記憶體快取機制
+- 優化 API 調用
+- 改進內容生成效能
 """
 
 import logging
@@ -25,18 +28,27 @@ import asyncio
 import time
 import os
 import re
+from cachetools import TTLCache
+import hashlib
 
 # 設定 token 使用量的 logger
 token_logger = logging.getLogger('token_usage')
 token_logger.setLevel(logging.INFO)
 
 # 確保 logs 目錄存在
-if not os.path.exists('src/logs'):
-    os.makedirs('src/logs')
+log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
 
 # 設定 token 使用量的 file handler
-token_handler = logging.FileHandler('src/logs/token_usage.log')
+token_handler = logging.FileHandler(os.path.join(log_dir, 'token_usage.log'))
 token_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+
+# 移除所有現有的處理器
+for handler in token_logger.handlers[:]:
+    token_logger.removeHandler(handler)
+
+# 添加新的處理器
 token_logger.addHandler(token_handler)
 
 # 初始化累計 token 使用量
@@ -44,9 +56,10 @@ total_tokens = 0
 request_count = 0
 
 # 讀取最後一次的 token 使用量
-if os.path.exists('src/logs/token_usage.log'):
+token_log_path = os.path.join(log_dir, 'token_usage.log')
+if os.path.exists(token_log_path):
     try:
-        with open('src/logs/token_usage.log', 'r', encoding='utf-8') as f:
+        with open(token_log_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
             if lines:
                 last_line = lines[-1]
@@ -60,6 +73,11 @@ if os.path.exists('src/logs/token_usage.log'):
                     request_count = int(match.group(1))
     except Exception as e:
         logging.error(f"讀取 token 使用量記錄時發生錯誤：{str(e)}")
+
+# 快取設定
+PERSONALITY_CACHE_TTL = 3600  # 人設快取時間（1小時）
+SENTIMENT_CACHE_TTL = 300    # 情感分析快取時間（5分鐘）
+CACHE_MAXSIZE = 100         # 快取最大容量
 
 class AIError(Exception):
     """AI 相關錯誤"""
@@ -82,6 +100,11 @@ class AIHandler:
         self.total_tokens = total_tokens
         self.request_count = request_count
         self.db = None  # 資料庫連接會在 initialize 中設定
+        
+        # 初始化快取
+        self._personality_cache = TTLCache(maxsize=CACHE_MAXSIZE, ttl=PERSONALITY_CACHE_TTL)
+        self._sentiment_cache = TTLCache(maxsize=CACHE_MAXSIZE, ttl=SENTIMENT_CACHE_TTL)
+        self._context_cache = TTLCache(maxsize=CACHE_MAXSIZE, ttl=300)
 
     async def initialize(self, db):
         """初始化 AI 處理器的資料庫連接和人設記憶
@@ -399,86 +422,63 @@ class AIHandler:
         Returns:
             Dict[str, float]: 情感分析結果（百分比）
         """
-        # 定義情感詞權重
-        sentiment_weights = {
-            'positive': {
-                '極高': ['超愛', '太棒了', '完美', '震撼', '傑作', '神作', '驚艷', '感動到哭'],
-                '很高': ['好棒', '優秀', '精彩', '讚嘆', '推薦', '喜歡', '期待', '驚喜'],
-                '中高': ['不錯', '還好', '可以', '還行', '普通', '一般', '正常'],
-                '偏高': ['有趣', '有意思', '值得一看', '還不錯'],
-                '略高': ['還可以', '勉強', '將就', '湊合']
-            },
-            'neutral': {
-                '極中': ['思考', '觀察', '分析', '研究', '探討', '評估'],
-                '很中': ['看看', '試試', '考慮', '觀望', '等等'],
-                '中等': ['或許', '可能', '也許', '大概', '應該'],
-                '偏中': ['不確定', '不一定', '再說', '再看'],
-                '略中': ['隨便', '都行', '無所謂', '沒差']
-            },
-            'negative': {
-                '極低': ['糟糕', '失望', '討厭', '噁心', '垃圾', '廢物', '爛透'],
-                '很低': ['不好', '不行', '差勁', '糟糕', '難看'],
-                '中低': ['不太好', '不太行', '不太喜歡', '不太適合'],
-                '偏低': ['有點差', '有點不好', '有點不行'],
-                '略低': ['不太確定', '不太懂', '不太了解']
-            }
-        }
+        # 生成快取金鑰
+        text_hash = hashlib.md5(text.encode()).hexdigest()
+        cache_key = f"sentiment_{text_hash}"
         
-        # 定義表情符號權重
-        emoji_weights = {
-            'positive': ['💖', '✨', '💫', '🎉', '💝', '💕', '💗', '🌟', '😊', '🥰', '😍', '🤗', '💪', '👍'],
-            'neutral': ['💭', '🤔', '🧐', '🔍', '👀', '👁️', '🗣️', '👥', '💬', '💡'],
-            'negative': ['😱', '😨', '😰', '😢', '😭', '😤', '😒', '😕', '😟', '😔', '😣', '😓']
-        }
-        
-        # 初始化分數
-        scores = {'positive': 0, 'neutral': 0, 'negative': 0}
-        
-        # 分析文字情感
-        for sentiment, levels in sentiment_weights.items():
-            for level, words in levels.items():
-                weight = {
-                    '極高': 2.0, '很高': 1.5, '中高': 1.0, '偏高': 0.8, '略高': 0.5,
-                    '極中': 2.0, '很中': 1.5, '中等': 1.0, '偏中': 0.8, '略中': 0.5,
-                    '極低': 2.0, '很低': 1.5, '中低': 1.0, '偏低': 0.8, '略低': 0.5
-                }[level]
-                
-                for word in words:
-                    if word in text:
-                        scores[sentiment] += weight
-        
-        # 分析表情符號情感
-        for sentiment, emojis in emoji_weights.items():
-            for emoji in emojis:
-                if emoji in text:
-                    scores[sentiment] += 0.5
-        
-        # 計算總分
-        total = sum(scores.values())
-        if total == 0:
-            # 如果沒有檢測到任何情感，根據表情符號判斷
-            emoji_count = {
-                'positive': sum(1 for emoji in emoji_weights['positive'] if emoji in text),
-                'neutral': sum(1 for emoji in emoji_weights['neutral'] if emoji in text),
-                'negative': sum(1 for emoji in emoji_weights['negative'] if emoji in text)
-            }
-            emoji_total = sum(emoji_count.values())
-            if emoji_total > 0:
-                return {
-                    'positive': round(emoji_count['positive'] / emoji_total * 100, 1),
-                    'neutral': round(emoji_count['neutral'] / emoji_total * 100, 1),
-                    'negative': round(emoji_count['negative'] / emoji_total * 100, 1)
-                }
-            return {'positive': 30.0, 'neutral': 40.0, 'negative': 30.0}
-        
-        # 計算百分比
-        result = {
-            sentiment: round(score / total * 100, 1)
-            for sentiment, score in scores.items()
-        }
-        
-        self.logger.info(f"情感分析結果：正面 {result['positive']}%, 中性 {result['neutral']}%, 負面 {result['negative']}%")
-        return result
+        # 檢查快取
+        if cache_key in self._sentiment_cache:
+            return self._sentiment_cache[cache_key]
+            
+        try:
+            response = await self.openai_client.chat.completions.create(
+                model=self.config.OPENAI_MODEL,
+                messages=[
+                    {"role": "system", "content": "你是一個情感分析專家。請分析文本的情感，並以JSON格式返回正面、中性、負面各佔的百分比。"},
+                    {"role": "user", "content": f"請分析這段文字的情感，並以JSON格式返回正面、中性、負面的百分比（三者加總應為100）：{text}"}
+                ],
+                temperature=0.3,
+                max_tokens=100
+            )
+            
+            # 解析回應
+            sentiment_text = response.choices[0].message.content
+            try:
+                # 嘗試從回應中提取JSON
+                sentiment_match = re.search(r'\{.*\}', sentiment_text)
+                if sentiment_match:
+                    sentiment_json = json.loads(sentiment_match.group())
+                    sentiment_scores = {
+                        "positive": float(sentiment_json.get("positive", 0)),
+                        "neutral": float(sentiment_json.get("neutral", 0)),
+                        "negative": float(sentiment_json.get("negative", 0))
+                    }
+                else:
+                    # 如果找不到JSON，嘗試從文本中提取數字
+                    positive = float(re.search(r'正面.*?(\d+)', sentiment_text).group(1)) if re.search(r'正面.*?(\d+)', sentiment_text) else 0
+                    neutral = float(re.search(r'中性.*?(\d+)', sentiment_text).group(1)) if re.search(r'中性.*?(\d+)', sentiment_text) else 0
+                    negative = float(re.search(r'負面.*?(\d+)', sentiment_text).group(1)) if re.search(r'負面.*?(\d+)', sentiment_text) else 0
+                    
+                    total = positive + neutral + negative
+                    if total == 0:
+                        sentiment_scores = {"positive": 33.33, "neutral": 33.33, "negative": 33.33}
+                    else:
+                        sentiment_scores = {
+                            "positive": (positive / total) * 100,
+                            "neutral": (neutral / total) * 100,
+                            "negative": (negative / total) * 100
+                        }
+            except Exception as e:
+                self.logger.error(f"解析情感分析結果時發生錯誤: {str(e)}")
+                sentiment_scores = {"positive": 33.33, "neutral": 33.33, "negative": 33.33}
+            
+            # 更新快取
+            self._sentiment_cache[cache_key] = sentiment_scores
+            return sentiment_scores
+            
+        except Exception as e:
+            self.logger.error(f"情感分析失敗: {str(e)}")
+            return {"positive": 33.33, "neutral": 33.33, "negative": 33.33}
 
     def _validate_sentiment(self, current_sentiment: Dict[str, float], mood: str) -> bool:
         """驗證情感分析結果是否符合當前心情
@@ -672,36 +672,61 @@ class AIHandler:
             return None
 
     async def _get_current_context(self) -> Dict[str, Any]:
-        """獲取當前上下文"""
-        current_hour = datetime.now().hour
+        """獲取當前上下文（使用快取）"""
+        cache_key = "current_context"
         
-        # 根據時間段設定心情和風格
-        if 0 <= current_hour < 6:  # 深夜
-            mood = random.choice(['憂鬱寂寞', '思考人生', '失眠', '想找人聊天'])
-            style = '需要陪伴'
-            topics = random.sample(['寂寞', '未來世界', '二次元', '夜生活', '心情', '夢想'], 3)
-        elif 6 <= current_hour < 12:  # 早上
-            mood = random.choice(['精神飽滿', '期待新的一天', '慵懶', '想玩遊戲'])
-            style = '活力充沛'
-            topics = random.sample(['早安', '遊戲', '生活', '心情', '寵物', '學習'], 3)
-        elif 12 <= current_hour < 18:  # 下午
-            mood = random.choice(['充實', '放鬆', '專注', '想交朋友'])
-            style = '分享生活'
-            topics = random.sample(['遊戲', '興趣', '美食', '購物', '娛樂', '科技'], 3)
-        else:  # 晚上
-            mood = random.choice(['放鬆', '感性', '期待', '想談戀愛'])
-            style = '抒發感受'
-            topics = random.sample(['娛樂', '二次元', '心情', '生活', '未來', '戀愛'], 3)
-        
-        self.logger.info(f"當前時間：{current_hour}時，心情：{mood}，風格：{style}")
-        self.logger.info(f"選擇的主題：{topics}")
-        
-        return {
-            'time': current_hour,
-            'mood': mood,
-            'style': style,
-            'topics': topics
-        }
+        # 檢查快取
+        if cache_key in self._context_cache:
+            return self._context_cache[cache_key]
+            
+        try:
+            # 獲取當前時間相關資訊
+            current_time = datetime.now(self.timezone)
+            hour = current_time.hour
+            
+            # 根據時間段設定心情和風格
+            if 0 <= hour < 6:  # 深夜
+                mood = random.choice(['憂鬱寂寞', '思考人生', '失眠', '想找人聊天'])
+                style = '需要陪伴'
+                topics = random.sample(['寂寞', '未來世界', '二次元', '夜生活', '心情', '夢想'], 3)
+            elif 6 <= hour < 12:  # 早上
+                mood = random.choice(['精神飽滿', '期待新的一天', '慵懶', '想玩遊戲'])
+                style = '活力充沛'
+                topics = random.sample(['早安', '遊戲', '生活', '心情', '寵物', '學習'], 3)
+            elif 12 <= hour < 18:  # 下午
+                mood = random.choice(['充實', '放鬆', '專注', '想交朋友'])
+                style = '分享生活'
+                topics = random.sample(['遊戲', '興趣', '美食', '購物', '娛樂', '科技'], 3)
+            else:  # 晚上
+                mood = random.choice(['放鬆', '感性', '期待', '想談戀愛'])
+                style = '抒發感受'
+                topics = random.sample(['娛樂', '二次元', '心情', '生活', '未來', '戀愛'], 3)
+            
+            # 構建上下文
+            context = {
+                'time': hour,
+                'mood': mood,
+                'style': style,
+                'topics': topics,
+                'time_period': self._get_current_time_period()
+            }
+            
+            logging.info(f"當前時間：{hour}時，心情：{mood}，風格：{style}")
+            logging.info(f"選擇的主題：{topics}")
+            
+            # 更新快取
+            self._context_cache[cache_key] = context
+            return context
+            
+        except Exception as e:
+            logging.error(f"獲取當前上下文失敗: {str(e)}")
+            return {
+                'time': datetime.now(self.timezone).hour,
+                'mood': '平靜',
+                'style': '日常',
+                'topics': ['生活', '心情', '日常'],
+                'time_period': self._get_current_time_period()
+            }
 
     def _get_current_time_period(self) -> str:
         """獲取當前時間段的描述"""

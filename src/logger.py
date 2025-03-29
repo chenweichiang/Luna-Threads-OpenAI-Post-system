@@ -7,6 +7,7 @@ Changes:
 - 優化日誌格式
 - 改進日誌輸出
 - 加強日誌分類
+- 統一日誌路徑
 """
 
 import logging
@@ -21,8 +22,8 @@ class LoggerSetup:
     def __init__(self, config: Config):
         """初始化"""
         self.config = config
-        self.log_dir = 'logs'
-        self.log_file = os.path.join(self.log_dir, 'threads_bot.log')
+        self.log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+        self.log_file = os.path.join(self.log_dir, 'threads_poster.log')
         self._setup_log_dir()
         self._setup_logger()
 
@@ -63,6 +64,12 @@ class LoggerSetup:
         # 設置根記錄器
         root_logger = logging.getLogger()
         root_logger.setLevel(self.config.LOG_LEVEL)
+        
+        # 移除所有現有的處理器
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+            
+        # 添加新的處理器
         root_logger.addHandler(file_handler)
         root_logger.addHandler(console_handler)
 

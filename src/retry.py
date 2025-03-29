@@ -1,6 +1,15 @@
 """
-ThreadsPoster 錯誤恢復機制
-處理重試和錯誤恢復
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 重試機制模組，負責處理系統的錯誤恢復和重試邏輯
+Last Modified: 2024.03.30
+Changes:
+- 實現基本重試功能
+- 加強錯誤處理
+- 改進日誌記錄
+- 優化重試策略
+- 新增斷路器模式
+- 新增速率限制器
 """
 
 import asyncio
