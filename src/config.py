@@ -7,6 +7,8 @@ Changes:
 - 優化設定檔結構
 - 新增人設記憶相關設定
 - 改進設定檔讀取機制
+- 優化日誌路徑設定
+- 加強設定檔驗證
 """
 
 import os
@@ -22,8 +24,8 @@ class Config:
     """設定檔類別"""
     
     # 版本資訊
-    VERSION = "1.0.0"
-    LAST_UPDATED = "2024/03/27"
+    VERSION = "1.1.4"
+    LAST_UPDATED = "2024/03/30"
     
     def __init__(self, **kwargs):
         """初始化配置"""
@@ -147,9 +149,9 @@ class Config:
                     "style": "溫柔體貼"
                 },
                 "night": {
-                    "mood": "慵懶放鬆",
-                    "topics": ["遊戲", "夜晚", "思考"],
-                    "style": "慵懶神秘"
+                    "mood": "安靜思考",
+                    "topics": ["星空", "音樂", "夢想"],
+                    "style": "溫柔安靜"
                 }
             }
         }

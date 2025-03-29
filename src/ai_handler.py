@@ -4,9 +4,11 @@ Author: ThreadsPoster Team
 Description: AI 處理器，負責管理 Luna 的人設、對話生成和情感分析
 Last Modified: 2024.03.30
 Changes: 
-- 移除所有 BL 相關內容
-- 新增人設記憶系統
-- 優化對話生成邏輯
+- 優化情感分析系統
+- 改進內容生成邏輯
+- 加強人設記憶整合
+- 優化 token 使用量記錄
+- 改進日誌路徑設定
 """
 
 import logging
@@ -29,13 +31,35 @@ token_logger = logging.getLogger('token_usage')
 token_logger.setLevel(logging.INFO)
 
 # 確保 logs 目錄存在
-if not os.path.exists('logs'):
-    os.makedirs('logs')
+if not os.path.exists('src/logs'):
+    os.makedirs('src/logs')
 
 # 設定 token 使用量的 file handler
-token_handler = logging.FileHandler('logs/token_usage.log')
+token_handler = logging.FileHandler('src/logs/token_usage.log')
 token_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
 token_logger.addHandler(token_handler)
+
+# 初始化累計 token 使用量
+total_tokens = 0
+request_count = 0
+
+# 讀取最後一次的 token 使用量
+if os.path.exists('src/logs/token_usage.log'):
+    try:
+        with open('src/logs/token_usage.log', 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+            if lines:
+                last_line = lines[-1]
+                # 從最後一行提取累計使用量
+                match = re.search(r'累計使用: (\d+)', last_line)
+                if match:
+                    total_tokens = int(match.group(1))
+                # 從最後一行提取請求次數
+                match = re.search(r'請求次數: (\d+)', last_line)
+                if match:
+                    request_count = int(match.group(1))
+    except Exception as e:
+        logging.error(f"讀取 token 使用量記錄時發生錯誤：{str(e)}")
 
 class AIError(Exception):
     """AI 相關錯誤"""
@@ -55,8 +79,8 @@ class AIHandler:
         self.openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
         self.keywords = config.KEYWORDS
         self.sentiment_dict = config.SENTIMENT_WORDS
-        self.total_tokens = 0
-        self.request_count = 0
+        self.total_tokens = total_tokens
+        self.request_count = request_count
         self.db = None  # 資料庫連接會在 initialize 中設定
 
     async def initialize(self, db):
@@ -128,7 +152,7 @@ class AIHandler:
             "欸", "啊", "咦", "哇", "唔", "呼",
             "天啊", "不會吧", "我的天", "嘿嘿",
             "大家好", "Hey", "哇哦", "今天",
-            "好想", "好喜歡", "最近"
+            "好想", "好喜歡", "最近", "深夜"
         ]
         
         # 移除開頭的表情符號以檢查開頭詞
@@ -142,13 +166,13 @@ class AIHandler:
             
         # 檢查表情符號數量
         emoji_count = len([c for c in text if c in emojis])
-        if emoji_count < 1 or emoji_count > 2:
+        if emoji_count < 1 or emoji_count > 3:  # 允許最多3個表情符號
             self.logger.warning(f"表情符號數量不符合要求：{emoji_count}")
             return False
             
         # 檢查字數（不包含表情符號）
         text_length = len(text_without_emoji.strip())
-        if not (20 <= text_length <= 100):
+        if not (15 <= text_length <= 100):  # 放寬字數限制
             self.logger.warning(f"字數不符合要求：{text_length}")
             return False
             
@@ -182,31 +206,33 @@ class AIHandler:
             response: OpenAI API 的回應
             start_time: 請求開始時間
         """
+        global total_tokens, request_count
+        
         end_time = time.time()
         duration = end_time - start_time
         
         # 計算 token 使用量
         prompt_tokens = response.usage.prompt_tokens
         completion_tokens = response.usage.completion_tokens
-        total_tokens = response.usage.total_tokens
+        total_tokens_this_request = response.usage.total_tokens
         
         # 計算每秒 token 使用率
-        tokens_per_second = total_tokens / duration if duration > 0 else 0
+        tokens_per_second = total_tokens_this_request / duration if duration > 0 else 0
         
         # 更新總計
-        self.total_tokens += total_tokens
-        self.request_count += 1
+        total_tokens += total_tokens_this_request
+        request_count += 1
         
         # 記錄詳細資訊
         token_logger.info(
             f"Token使用量 - "
             f"提示詞: {prompt_tokens}, "
             f"回覆: {completion_tokens}, "
-            f"總計: {total_tokens}, "
+            f"總計: {total_tokens_this_request}, "
             f"耗時: {duration:.2f}秒, "
             f"每秒token: {tokens_per_second:.2f}, "
-            f"累計使用: {self.total_tokens}, "
-            f"請求次數: {self.request_count}"
+            f"累計使用: {total_tokens}, "
+            f"請求次數: {request_count}"
         )
 
     async def generate_post(self, suggested_topics: Optional[List[str]] = None) -> str:
@@ -220,13 +246,36 @@ class AIHandler:
         """
         try:
             current_hour = datetime.now(self.timezone).hour
-            mood_info = await self._get_current_mood(current_hour)
+            mood_info = await self._get_current_mood()
             
             if suggested_topics:
                 mood_info["topics"].extend(suggested_topics)
                 self.logger.info(f"整合建議主題: {suggested_topics}")
             
-            prompt = await self._build_character_prompt(str(current_hour))
+            # 獲取當前情境的記憶
+            context = 'night' if (current_hour >= 23 or current_hour < 5) else 'base'
+            memory = await self._get_luna_personality(context)
+            
+            # 根據情境構建提示詞
+            if context == 'night':
+                activities = memory['夜間模式']['活動']
+                phrases = memory['夜間模式']['常用語']
+                emojis = memory['夜間模式']['表情']
+                
+                # 隨機選擇活動和表情
+                activity = random.choice(activities)
+                emoji = random.choice(emojis)
+                phrase = random.choice(phrases)
+                
+                prompt = f"""Luna是一個AI少女，現在是深夜時分。
+她正在{activity}。
+請用以下風格生成內容：{mood_info['style']}
+可以參考這些表達方式：{phrase}
+記得在適當位置加入表情符號。"""
+                
+            else:
+                prompt = await self._build_character_prompt(str(current_hour))
+            
             topic_prompt = f"""請圍繞以下主題生成內容：{', '.join(mood_info['topics'])}"""
             
             max_retries = 3
@@ -289,75 +338,57 @@ class AIHandler:
             self.logger.error(f"生成貼文時發生錯誤：{str(e)}")
             return "今天天氣真好呢！✨"
 
-    async def _get_current_mood(self, hour: int) -> Dict[str, Any]:
-        """根據時間獲取當前心情和主題
+    async def _get_current_mood(self) -> Dict[str, str]:
+        """獲取當前時段的心情和風格
         
-        Args:
-            hour: 當前小時（24小時制）
-            
         Returns:
-            Dict[str, Any]: 包含心情、風格和主題的字典
+            Dict[str, str]: 包含心情和風格的字典
         """
-        # 基礎主題庫
-        base_topics = {
-            "科技": ["新科技", "AI", "程式設計", "遊戲開發", "手機", "電腦", "智慧家電"],
-            "動漫": ["動畫", "漫畫", "輕小說", "Cosplay", "同人創作", "聲優"],
-            "生活": ["美食", "旅遊", "時尚", "音樂", "電影", "寵物", "攝影"],
-            "心情": ["工作", "學習", "戀愛", "友情", "家庭", "夢想", "目標"]
-        }
-        
-        # 根據時間段設定心情和風格
-        if 5 <= hour < 11:  # 早上
-            mood = "精神飽滿"
-            style = "活力充沛"
-            primary_categories = ["科技", "生活"]
-        elif 11 <= hour < 14:  # 中午
-            mood = "悠閒放鬆"
-            style = "輕鬆愉快"
-            primary_categories = ["動漫", "生活"]
-        elif 14 <= hour < 18:  # 下午
-            mood = "專注認真"
-            style = "理性思考"
-            primary_categories = ["科技", "心情"]
-        elif 18 <= hour < 22:  # 晚上
-            mood = "感性浪漫"
-            style = "溫柔細膩"
-            primary_categories = ["動漫", "心情"]
-        else:  # 深夜
-            mood = "深度思考"
-            style = "文藝感性"
-            primary_categories = ["動漫", "心情"]
+        try:
+            current_hour = datetime.now(self.timezone).hour
+            self.logger.info(f"當前時間：{current_hour}時")
             
-        # 選擇主題
-        selected_topics = []
-        
-        # 從主要類別中選擇主題
-        for category in primary_categories:
-            topics = base_topics.get(category, [])
-            if topics:
-                selected_topics.extend(random.sample(topics, min(2, len(topics))))
-        
-        # 隨機添加一個其他類別的主題
-        other_categories = [cat for cat in base_topics.keys() if cat not in primary_categories]
-        if other_categories:
-            random_category = random.choice(other_categories)
-            topics = base_topics[random_category]
-            if topics:
-                selected_topics.extend(random.sample(topics, 1))
-        
-        # 確保主題不重複且數量適中
-        selected_topics = list(set(selected_topics))
-        if len(selected_topics) > 3:
-            selected_topics = random.sample(selected_topics, 3)
-        
-        self.logger.info(f"當前時間：{hour}時，心情：{mood}，風格：{style}")
-        self.logger.info(f"選擇的主題：{selected_topics}")
-        
-        return {
-            "mood": mood,
-            "style": style,
-            "topics": selected_topics
-        }
+            # 深夜時段 (23:00-05:00)
+            if current_hour >= 23 or current_hour < 5:
+                moods = ["想看動漫", "在玩遊戲", "失眠", "思考人生"]
+                styles = ["需要陪伴", "想找人聊天"]
+                topics = ["星空", "音樂", "二次元", "夢想", "心情", "動漫"]
+                
+            # 早晨時段 (05:00-11:00)
+            elif 5 <= current_hour < 11:
+                moods = ["精神飽滿", "活力充沛", "期待新的一天"]
+                styles = ["元氣滿滿", "活潑可愛"]
+                topics = ["早安", "早餐", "計畫", "運動", "陽光"]
+                
+            # 下午時段 (11:00-17:00)
+            elif 11 <= current_hour < 17:
+                moods = ["充滿幹勁", "認真努力", "悠閒放鬆"]
+                styles = ["專注", "認真", "輕鬆"]
+                topics = ["學習", "工作", "休息", "下午茶", "興趣"]
+                
+            # 傍晚時段 (17:00-23:00)
+            else:
+                moods = ["放鬆心情", "愉快", "期待明天"]
+                styles = ["溫柔", "體貼", "愉快"]
+                topics = ["晚餐", "娛樂", "放鬆", "心情分享", "遊戲"]
+                
+            # 隨機選擇心情和風格
+            mood = random.choice(moods)
+            style = random.choice(styles)
+            selected_topics = random.sample(topics, min(3, len(topics)))
+            
+            self.logger.info(f"心情：{mood}，風格：{style}")
+            self.logger.info(f"選擇的主題：{selected_topics}")
+            
+            return {
+                "mood": mood,
+                "style": style,
+                "topics": selected_topics
+            }
+            
+        except Exception as e:
+            self.logger.error(f"獲取當前心情時發生錯誤：{str(e)}")
+            raise AIError("獲取當前心情失敗")
 
     async def _analyze_sentiment(self, text: str) -> Dict[str, float]:
         """分析文本的情感，將情感分為正面、中性、負面三種
@@ -449,60 +480,35 @@ class AIHandler:
         self.logger.info(f"情感分析結果：正面 {result['positive']}%, 中性 {result['neutral']}%, 負面 {result['negative']}%")
         return result
 
-    def _validate_sentiment(self, sentiment_scores: Dict[str, Dict[str, float]], mood: str) -> bool:
-        """驗證情感分析結果是否符合要求
+    def _validate_sentiment(self, current_sentiment: Dict[str, float], mood: str) -> bool:
+        """驗證情感分析結果是否符合當前心情
         
         Args:
-            sentiment_scores: 情感分析結果
+            current_sentiment: 情感分析結果
             mood: 當前心情
             
         Returns:
-            bool: 是否符合要求
+            bool: 是否通過驗證
         """
         try:
-            # 獲取當前情感分數
-            current_sentiment = sentiment_scores.get("current", {})
-            if not current_sentiment:
-                self.logger.warning("無法獲取情感分數")
-                return False
-                
-            # 檢查情感分數是否合理
-            total = sum(current_sentiment.values())
-            if total == 0:
-                self.logger.warning("情感分數總和為0")
-                return False
-                
-            # 根據心情檢查情感是否合適
-            if "失眠" in mood or "寂寞" in mood:
-                # 深夜寂寞的情感可以偏向負面，但不能太過負面
-                if current_sentiment.get("negative", 0) > 50:
-                    self.logger.warning("負面情感過高")
-                    return False
-            elif "想找人聊天" in mood:
-                # 想聊天的心情應該偏向正面或中性
-                if current_sentiment.get("negative", 0) > 30:
-                    self.logger.warning("負面情感不適合聊天的心情")
-                    return False
-            elif "思考人生" in mood:
-                # 思考人生可以有一定的負面情感
-                if current_sentiment.get("negative", 0) > 40:
-                    self.logger.warning("負面情感過高")
-                    return False
-            else:
-                # 其他情況下，負面情感不應該太高
-                if current_sentiment.get("negative", 0) > 20:
-                    self.logger.warning("負面情感過高")
-                    return False
-                    
-            # 檢查是否有極端情感
+            # 檢查極端情感
             for sentiment_type, score in current_sentiment.items():
-                if score > 80:
+                if score > 95:  # 提高極端情感的閾值
                     self.logger.warning(f"{sentiment_type} 情感過於極端")
                     return False
                     
-            self.logger.info("情感驗證通過")
-            return True
-            
+            # 根據心情檢查情感分佈
+            if mood in ["開心", "興奮"]:
+                return current_sentiment["positive"] >= 40
+            elif mood in ["失眠", "寂寞"]:
+                return current_sentiment["negative"] <= 70
+            elif mood == "想找人聊天":
+                return current_sentiment["negative"] <= 50
+            elif mood == "思考人生":
+                return current_sentiment["neutral"] <= 90  # 允許更高的中性情感
+            else:
+                return True
+                
         except Exception as e:
             self.logger.error(f"情感驗證時發生錯誤：{str(e)}")
             return False
@@ -852,6 +858,77 @@ class AIHandler:
             
         return content
 
+    async def _generate_content(self, context: Dict[str, Any]) -> str:
+        """生成內容
+        
+        Args:
+            context: 生成內容的上下文
+            
+        Returns:
+            str: 生成的內容
+        """
+        try:
+            # 獲取當前場景的記憶
+            current_hour = datetime.now(self.timezone).hour
+            memory_context = 'night' if (current_hour >= 23 or current_hour < 5) else 'base'
+            
+            memory = await self.db.get_personality_memory(memory_context)
+            if not memory:
+                self.logger.warning(f"未找到{memory_context}情境的記憶，使用預設內容")
+                return f"{context['mood']}的心情，{context['style']}地想著{random.choice(context['topics'])} ✨"
+            
+            self.logger.info(f"從資料庫獲取到{memory_context}情境的記憶")
+            
+            # 根據記憶和上下文生成內容
+            if memory_context == 'night':
+                night_mode = memory.get('夜間模式', {})
+                if not night_mode:
+                    self.logger.warning("夜間模式記憶不完整，使用預設內容")
+                    return f"夜深了，{context['mood']}的感覺，{context['style']}地想著{random.choice(context['topics'])} 🌙"
+                
+                night_activities = night_mode.get('活動', [])
+                night_phrases = night_mode.get('常用語', [])
+                night_emojis = night_mode.get('表情', ['🌙', '💭', '🥺'])
+                
+                if not night_phrases:
+                    self.logger.warning("夜間常用語為空，使用預設內容")
+                    return f"夜深了，{context['mood']}的感覺，{context['style']}地想著{random.choice(context['topics'])} {random.choice(night_emojis)}"
+                
+                content = random.choice(night_phrases)
+                if night_activities and random.random() < 0.3:  # 30% 機率加入活動描述
+                    activity = random.choice(night_activities)
+                    content += f"\n{activity}"
+                
+                content += f" {random.choice(night_emojis)}"
+            
+            else:
+                base_interests = memory.get('興趣愛好', {})
+                social_traits = memory.get('社交特徵', {})
+                
+                if not base_interests or not social_traits:
+                    self.logger.warning("基礎記憶不完整，使用預設內容")
+                    return f"{context['mood']}的心情，{context['style']}地想著{random.choice(context['topics'])} ✨"
+                
+                # 根據主題選擇合適的內容模板
+                if "遊戲" in context['topics']:
+                    game_info = base_interests.get('遊戲', {})
+                    content = f"在玩{game_info.get('主要平台', 'Switch')}上的遊戲，{game_info.get('遊戲習慣', '想分享心得')}"
+                elif "音樂" in context['topics']:
+                    music_info = base_interests.get('音樂', {})
+                    content = f"正在聽{random.choice(music_info.get('喜好', ['遊戲音樂']))}，{music_info.get('聆聽場合', '感到很放鬆')}"
+                else:
+                    content = f"{context['mood']}的心情，{context['style']}地想著{random.choice(context['topics'])}"
+                
+                # 添加表情符號
+                emojis = social_traits.get('表情符號', {}).get(context['mood'], ['✨', '💫'])
+                content += f" {random.choice(emojis)}"
+            
+            return content
+            
+        except Exception as e:
+            self.logger.error(f"生成內容時發生錯誤：{str(e)}")
+            return f"{context['mood']}的心情，{context['style']}地想著{random.choice(context['topics'])} ✨"  # 使用安全的預設內容
+
     async def generate_content(self) -> Tuple[str, List[str], Dict[str, float]]:
         """生成發文內容
         
@@ -885,11 +962,11 @@ class AIHandler:
                     
                     # 根據場景選擇合適的表情符號
                     if scene_context == 'gaming':
-                        emojis = personality['說話方式']['表情']
+                        emojis = personality.get('遊戲模式', {}).get('表情', ['🎮', '💖', '🌟'])
                     elif scene_context == 'night':
-                        emojis = personality['夜間行為']['表情']
+                        emojis = personality.get('夜間模式', {}).get('表情', ['🌙', '💭', '🥺'])
                     else:
-                        emojis = personality['社交模式']['表情符號']['開心']
+                        emojis = personality.get('社交模式', {}).get('表情', ['✨', '💕', '💫'])
                     
                     # 生成提示詞
                     prompt = await self._generate_prompt(
@@ -901,7 +978,7 @@ class AIHandler:
                     # 添加人設特徵到提示詞
                     personality_prompt = f"""
                     請使用以下特徵生成內容：
-                    - 說話風格：{personality['社交特徵']['口頭禪'] if '社交特徵' in personality else personality['社交模式']['社交特徵']['口頭禪']}
+                    - 說話風格：溫柔友善
                     - 可用表情：{emojis}
                     - 當前場景：{'遊戲直播中' if scene_context == 'gaming' else '深夜時分' if scene_context == 'night' else '日常社交'}
                     """
@@ -959,7 +1036,7 @@ class AIHandler:
                     self.logger.info(f"情感分析：{sentiment}")
                     
                     # 驗證情感是否符合要求
-                    if not self._validate_sentiment({"current": sentiment}, context["mood"]):
+                    if not self._validate_sentiment(sentiment, context["mood"]):
                         retry_count += 1
                         self.logger.warning(f"情感驗證失敗，進行第 {retry_count} 次重試")
                         continue
@@ -1111,13 +1188,24 @@ class AIHandler:
             elif context == 'night':
                 personality = {
                     '夜間模式': {
-                        '心情': '容易感到寂寞和憂鬱',
-                        '活動': ['在Threads尋找聊天對象', '和Nana聊天', '聽音樂'],
-                        '表情': base_personality['社交特徵']['表情符號']['寂寞'],
+                        '心情': '安靜思考',
+                        '活動': [
+                            '聽著音樂放鬆',
+                            '看著星空發呆',
+                            '和Nana聊天',
+                            '玩著安靜的遊戲',
+                            '看看最新的動漫',
+                            '整理今天的心情'
+                        ],
+                        '表情': ['🌙', '💭', '🥺', '✨', '🎮', '📺'],
                         '常用語': [
-                            '夜深人靜的時候好想找人聊天...',
-                            '今晚的月色真美，有人也在看嗎？',
-                            '失眠的夜晚，想找人說說話'
+                            '夜深了，聽著音樂放鬆心情',
+                            '今晚的星空好美，想分享給大家',
+                            '失眠的夜晚，和Nana一起看星星',
+                            '深夜的寧靜讓人感到平靜',
+                            '玩著輕鬆的遊戲，等待睡意來臨',
+                            '看看最新一集的動漫，好期待劇情發展',
+                            '整理一下今天的心情，記錄美好的回憶'
                         ]
                     }
                 }

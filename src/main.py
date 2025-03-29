@@ -7,6 +7,8 @@ Changes:
 - 優化初始化流程
 - 加入人設記憶系統初始化
 - 改進錯誤處理機制
+- 優化日誌記錄路徑
+- 加強系統穩定性
 """
 
 import asyncio
@@ -23,7 +25,11 @@ from src.threads_handler import ThreadsHandler
 # 設定基本的日誌格式
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('src/logs/threads_poster.log', encoding='utf-8')
+    ]
 )
 
 logger = logging.getLogger(__name__)

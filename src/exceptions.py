@@ -7,6 +7,8 @@ Changes:
 - 新增自定義異常類型
 - 優化異常處理邏輯
 - 改進錯誤訊息
+- 加強異常追蹤
+- 優化錯誤分類
 """
 
 class ThreadsBotError(Exception):
