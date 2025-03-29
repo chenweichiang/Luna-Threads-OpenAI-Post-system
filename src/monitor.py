@@ -1,6 +1,12 @@
 """
-ThreadsPoster 監控系統
-負責追蹤系統性能和運行狀態
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 監控模組，負責系統運行狀態監控和日誌記錄
+Last Modified: 2024.03.30
+Changes:
+- 優化監控邏輯
+- 改進日誌記錄
+- 加強異常監控
 """
 
 import logging

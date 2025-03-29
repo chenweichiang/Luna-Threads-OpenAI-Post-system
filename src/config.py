@@ -1,6 +1,12 @@
 """
-ThreadsPoster 設定檔
-包含所有系統配置和環境變數
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 設定檔管理模組，負責處理所有系統設定和配置
+Last Modified: 2024.03.30
+Changes:
+- 優化設定檔結構
+- 新增人設記憶相關設定
+- 改進設定檔讀取機制
 """
 
 import os
@@ -27,17 +33,20 @@ class Config:
         # 基本設定
         self.TIMEZONE = pytz.timezone("Asia/Taipei")  # 直接使用固定時區
         self.LOG_LEVEL = kwargs.get("LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO"))
-        self.LOG_PATH = kwargs.get("LOG_PATH", os.getenv("LOG_PATH", "logs/threads_poster.log"))
-
+        
+        # 處理日誌路徑
+        log_path = kwargs.get("LOG_PATH", os.getenv("LOG_PATH", "logs/threads_poster.log"))
+        self.LOG_PATH = os.path.join(os.getcwd(), log_path)
+        
         # 發文時間設定
         self.PRIME_POST_START = int(kwargs.get("PRIME_POST_START", os.getenv("PRIME_POST_START", "20")))  # 晚上8點
         self.PRIME_POST_END = int(kwargs.get("PRIME_POST_END", os.getenv("PRIME_POST_END", "2")))      # 凌晨2點
         self.MIN_POSTS_PER_DAY = int(kwargs.get("MIN_POSTS_PER_DAY", os.getenv("MIN_POSTS_PER_DAY", "5")))  # 每日最少5篇
-        self.MAX_POSTS_PER_DAY = int(kwargs.get("MAX_POSTS_PER_DAY", os.getenv("MAX_POSTS_PER_DAY", "10")))  # 每日最多10篇
+        self.MAX_POSTS_PER_DAY = int(kwargs.get("MAX_POSTS_PER_DAY", os.getenv("MAX_POSTS_PER_DAY", "999")))  # 每日最多999篇
         self.PRIME_TIME_POST_RATIO = float(kwargs.get("PRIME_TIME_POST_RATIO", os.getenv("PRIME_TIME_POST_RATIO", "0.7")))  # 黃金時段發文比例
 
         # API 設定
-        self.API_BASE_URL = kwargs.get("API_BASE_URL", os.getenv("THREADS_API_BASE_URL", "https://www.threads.net/api/v1"))
+        self.API_BASE_URL = kwargs.get("API_BASE_URL", os.getenv("THREADS_API_BASE_URL", "https://graph.threads.net/v1.0"))
         self.THREADS_ACCESS_TOKEN = kwargs.get("THREADS_ACCESS_TOKEN", os.getenv("THREADS_ACCESS_TOKEN", "your_access_token_here"))
         self.THREADS_APP_ID = kwargs.get("THREADS_APP_ID", os.getenv("THREADS_APP_ID", "your_app_id_here"))
         self.THREADS_APP_SECRET = kwargs.get("THREADS_APP_SECRET", os.getenv("THREADS_APP_SECRET", "your_app_secret_here"))
@@ -53,11 +62,10 @@ class Config:
         # MongoDB 設定
         self.MONGODB_URI = kwargs.get("MONGODB_URI", os.getenv("MONGODB_URI", "mongodb://localhost:27017"))
         self.MONGODB_DB_NAME = kwargs.get("MONGODB_DB_NAME", os.getenv("MONGODB_DB_NAME", "threads_poster"))
-        self.MONGODB_COLLECTION = kwargs.get("MONGODB_COLLECTION", os.getenv("MONGODB_COLLECTION", "conversations"))
+        self.MONGODB_COLLECTION = kwargs.get("MONGODB_COLLECTION", os.getenv("MONGODB_COLLECTION", "posts"))
 
         # 系統運行參數
         self.CHECK_INTERVAL = int(kwargs.get("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL", "60")))  # 檢查新回覆的間隔（秒）
-        self.POST_INTERVAL_HOURS = int(kwargs.get("POST_INTERVAL_HOURS", os.getenv("POST_INTERVAL_HOURS", "3")))  # 發文間隔（小時）
         self.RETRY_INTERVAL = int(kwargs.get("RETRY_INTERVAL", os.getenv("RETRY_INTERVAL", "300")))  # 重試間隔（秒）
         self.MAX_RETRIES = int(kwargs.get("MAX_RETRIES", os.getenv("MAX_RETRIES", "3")))  # 最大重試次數
         self.RETRY_DELAY = int(kwargs.get("RETRY_DELAY", os.getenv("RETRY_DELAY", "5")))  # 重試延遲（秒）
@@ -83,8 +91,8 @@ class Config:
                     "max": 180 * 60  # 其他時段最大間隔（3小時）
                 }
             },
-            "max_daily_posts": 10,    # 每日最大發文數
-            "min_daily_posts": 5,     # 每日最少發文數
+            "max_daily_posts": 999,    # 每日最大發文數
+            "min_daily_posts": self.MIN_POSTS_PER_DAY,     # 每日最少發文數
             "log_level": os.getenv("LOG_LEVEL", "DEBUG")
         })
         

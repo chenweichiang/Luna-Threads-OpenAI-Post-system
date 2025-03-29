@@ -59,107 +59,64 @@ def format_time(dt: datetime, format_str: str = '%Y-%m-%d %H:%M:%S') -> str:
         logging.error(f"格式化時間時發生錯誤：{str(e)}")
         return ''
 
-def sanitize_text(text: str, max_length: int = 25) -> str:
-    """清理和格式化文本"""
-    if not text or len(text.strip()) == 0:
-        return ""
-        
-    # 修正縮寫
-    text = re.sub(r'\bB\b', 'BL', text)
-    text = re.sub(r'\bSw\b', 'Switch', text)
-    text = re.sub(r'\bMac\b', 'Macbook', text)
-    text = re.sub(r'\bPC\b', '電腦', text)
-    text = re.sub(r'\bVR\b', 'Quest', text)
-    text = re.sub(r'\bApp\b', 'APP', text)
-    text = re.sub(r'\bAI\b', '人工智慧', text)
+def sanitize_text(text: str) -> str:
+    """清理文本，保持原始文本的完整性。
+    智能處理文本，盡可能保留原始內容。
+    """
+    if not text:
+        return text
+
+    # 定義表情符號
+    emoji_pattern = r'[\U0001F300-\U0001F9FF]|[\u2600-\u26FF]|[\u2700-\u27BF]'
     
-    # 移除引號
-    text = re.sub(r'[「」『』""'']', '', text)
+    # 提取表情符號
+    emojis = re.findall(emoji_pattern, text)
     
-    # 移除多餘的標點符號
-    text = re.sub(r'[,，]{2,}', '，', text)  # 重複的逗號
-    text = re.sub(r'[.。]{2,}', '。', text)  # 重複的句號
-    text = re.sub(r'[!！]{2,}', '！', text)  # 重複的驚嘆號
-    text = re.sub(r'[?？]{2,}', '？', text)  # 重複的問號
-    text = re.sub(r'[\s]+', ' ', text)  # 多餘的空白
-    text = re.sub(r'[,，。][,，。]+', '。', text)  # 多個不同的句號
-    text = re.sub(r'[,，。][!！?？]', lambda m: m.group(0)[-1], text)  # 句號後的驚嘆號或問號，保留後者
-    text = re.sub(r'[,，]([!！?？])', lambda m: m.group(1), text)  # 逗號後的驚嘆號或問號，保留後者
+    # 移除多餘的表情符號，只保留最後兩個
+    if len(emojis) > 2:
+        emojis = emojis[-2:]
     
-    # 修正不完整的詞語
-    text = re.sub(r'人工智慧生成同[!！?？]', '人工智慧生成的同人圖好精緻！', text)
-    text = re.sub(r'人工智慧畫的[!！?？]', '人工智慧畫的圖好精美！', text)
-    text = re.sub(r'人工智慧做的[!！?？]', '人工智慧做的立繪好可愛！', text)
-    text = re.sub(r'人工智慧生成[!！?？]', '人工智慧生成的內容好棒！', text)
-    text = re.sub(r'Switch上玩的[!！?？]', 'Switch上玩的遊戲好好玩！', text)
-    text = re.sub(r'Quest看的[!！?？]', 'Quest看的動畫好精彩！', text)
-    text = re.sub(r'BL漫畫的[!！?？]', 'BL漫畫的劇情好精彩！', text)
-    text = re.sub(r'BL遊戲的[!！?？]', 'BL遊戲的劇情好甜！', text)
-    text = re.sub(r'BL動畫的[!！?？]', 'BL動畫的畫風好美！', text)
-    text = re.sub(r'新的遊戲[!！?？]', '新的遊戲好好玩！', text)
-    text = re.sub(r'新的動畫[!！?？]', '新的動畫好精彩！', text)
-    text = re.sub(r'新的漫畫[!！?？]', '新的漫畫好好看！', text)
-    text = re.sub(r'新的APP[!！?？]', '新的APP好實用！', text)
-    text = re.sub(r'新的功能[!！?？]', '新的功能好方便！', text)
-    text = re.sub(r'新的更新[!！?？]', '新的更新好貼心！', text)
+    # 移除文本中的表情符號，但保留位置
+    text_without_emojis = re.sub(emoji_pattern, '', text)
     
-    # 修正常見的不完整句子
-    text = re.sub(r'對我的[!！?？]', '對我的感覺！', text)
-    text = re.sub(r'這麼[!！?？]', '這麼棒！', text)
-    text = re.sub(r'好想[!！?？]', '好想要！', text)
-    text = re.sub(r'不行[!！?？]', '不行啦！', text)
-    text = re.sub(r'好棒[!！?？]', '好棒啊！', text)
-    text = re.sub(r'好可愛[!！?？]', '好可愛啊！', text)
-    text = re.sub(r'好厲害[!！?？]', '好厲害啊！', text)
-    text = re.sub(r'好喜歡[!！?？]', '好喜歡啊！', text)
-    text = re.sub(r'好期待[!！?？]', '好期待啊！', text)
-    text = re.sub(r'好興奮[!！?？]', '好興奮啊！', text)
-    
-    # 修正句子結構
-    text = re.sub(r'它的角色和[!！?？]', '它的角色設計超棒的！', text)
-    text = re.sub(r'這個遊戲的[!！?？]', '這個遊戲的劇情好精彩！', text)
-    text = re.sub(r'新的功能[!！?？]', '新的功能超好用！', text)
-    text = re.sub(r'這部動畫的[!！?？]', '這部動畫的畫風好美！', text)
-    text = re.sub(r'這款APP的[!！?？]', '這款APP的設計好貼心！', text)
-    text = re.sub(r'這個更新[!！?？]', '這個更新太讚了！', text)
-    text = re.sub(r'這個劇情[!！?？]', '這個劇情好精彩！', text)
-    text = re.sub(r'這個聲優[!！?？]', '這個聲優配音好棒！', text)
-    text = re.sub(r'這個畫面[!！?？]', '這個畫面太美了！', text)
-    text = re.sub(r'這個效果[!！?？]', '這個效果好厲害！', text)
-    text = re.sub(r'這個設計[!！?？]', '這個設計好貼心！', text)
-    text = re.sub(r'這個體驗[!！?？]', '這個體驗好棒！', text)
-    text = re.sub(r'這個感覺[!！?？]', '這個感覺好舒服！', text)
-    text = re.sub(r'這個操作[!！?？]', '這個操作好順手！', text)
-    text = re.sub(r'這個介面[!！?？]', '這個介面好漂亮！', text)
-    text = re.sub(r'這個功能[!！?？]', '這個功能好實用！', text)
-    text = re.sub(r'這個表現[!！?？]', '這個表現好出色！', text)
-    text = re.sub(r'這個配音[!！?？]', '這個配音好動聽！', text)
-    text = re.sub(r'這個故事[!！?？]', '這個故事好感人！', text)
-    text = re.sub(r'這個結局[!！?？]', '這個結局好意外！', text)
-    
-    # 確保句子結尾有適當的標點符號
-    if not re.search(r'[。！？]$', text):
-        text = text.rstrip('，') + '！'
+    # 基本清理
+    text_without_emojis = text_without_emojis.strip()
+    text_without_emojis = re.sub(r'[\s]+', ' ', text_without_emojis)  # 清理多餘空格
     
     # 移除開頭的標點符號
-    text = re.sub(r'^[,，。!！?？\s]+', '', text)
+    text_without_emojis = re.sub(r'^[。!！?？\s]+', '', text_without_emojis)
     
-    # 如果文字太長，截斷到最後一個完整句子
-    if len(text) > max_length:
-        sentences = re.split(r'([。！？])', text)
-        result = ''
-        for i in range(0, len(sentences)-1, 2):
-            if len(result + sentences[i] + sentences[i+1]) <= max_length:
-                result += sentences[i] + sentences[i+1]
-            else:
-                break
-        text = result if result else text[:max_length-1] + '！'
+    # 檢查結尾標點
+    valid_endings = ['！', '。', '？', '～']
     
-    # 確保文字長度至少10個字
-    if len(text) < 10:
-        return ""
+    # 如果文本以表情符號結尾，先移除它們
+    while text_without_emojis and text_without_emojis[-1] in ['～', '~']:
+        text_without_emojis = text_without_emojis[:-1].strip()
     
-    return text
+    # 檢查是否有有效的結尾標點
+    has_valid_ending = any(text_without_emojis.endswith(p) for p in valid_endings)
+    
+    # 如果沒有有效的結尾標點
+    if not has_valid_ending:
+        # 如果最後一個字符是標點符號
+        if text_without_emojis[-1] in ['，', ',', '、', '；', ';']:
+            text_without_emojis = text_without_emojis[:-1] + '！'
+        else:
+            text_without_emojis = text_without_emojis + '！'
+    
+    # 檢查是否包含完整句子
+    if '，' in text_without_emojis or ',' in text_without_emojis:
+        parts = re.split('[，,]', text_without_emojis)
+        # 如果最後一部分太短，而且不是完整的句子
+        if len(parts[-1].strip()) <= 5 and not any(word in parts[-1] for word in ['嗎', '呢', '吧', '啊']):
+            text_without_emojis = ''.join(parts[:-1]) + '！'
+    
+    # 重新添加表情符號
+    result = text_without_emojis
+    if emojis:
+        result = result + ''.join(emojis)
+    
+    return result
 
 def safe_json_loads(json_str: str) -> Optional[Any]:
     """安全的 JSON 解析"""

@@ -1,6 +1,12 @@
 """
-ThreadsPoster 日誌處理模組
-處理所有日誌相關功能
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 日誌處理模組，負責系統日誌的配置和管理
+Last Modified: 2024.03.30
+Changes:
+- 優化日誌格式
+- 改進日誌輸出
+- 加強日誌分類
 """
 
 import logging

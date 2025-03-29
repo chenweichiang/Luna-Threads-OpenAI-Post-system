@@ -1,6 +1,12 @@
 """
-ThreadsPoster 資料庫處理模組
-處理與 MongoDB 的所有互動
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 資料庫處理模組，負責管理 MongoDB 連接和資料操作
+Last Modified: 2024.03.30
+Changes:
+- 新增人設記憶相關的資料庫操作
+- 優化資料庫連接管理
+- 加強錯誤處理機制
 """
 
 import logging
@@ -58,7 +64,9 @@ class Database:
         self.client = AsyncIOMotorClient(self.config.MONGODB_URI)
         self.db = self.client[self.config.MONGODB_DB_NAME]
         self.posts = self.db[self.config.MONGODB_COLLECTION]
+        self.personality_memories = self.db['personality_memories']  # 新增人設記憶集合
         self._initialized = False
+        self.timezone = pytz.timezone('Asia/Taipei')
         
     async def initialize(self):
         """初始化資料庫連接"""
@@ -69,6 +77,10 @@ class Database:
             # 建立索引
             await self.posts.create_index([("post_id", 1)], unique=True)
             await self.posts.create_index([("created_at", -1)])
+            
+            # 建立人設記憶集合的索引
+            await self.personality_memories.create_index([("context", 1)], unique=True)
+            await self.personality_memories.create_index([("last_updated", -1)])
             
             self._initialized = True
             self.logger.info("資料庫初始化完成")
@@ -851,3 +863,157 @@ class Database:
         except Exception as e:
             self.logger.error(f"檢查每日發文限制時發生錯誤: {e}")
             return True  # 發生錯誤時，為安全起見返回已達上限
+
+    # Luna的人設記憶系統
+    @with_retry(retries=3, delay=1)
+    async def save_personality_memory(self, context: str, memory_data: Dict[str, Any]) -> bool:
+        """儲存Luna的人設記憶
+        
+        Args:
+            context: 記憶的場景或情境
+            memory_data: 記憶的內容
+            
+        Returns:
+            bool: 是否成功儲存
+        """
+        try:
+            now = datetime.now(self.timezone)
+            memory_doc = {
+                'context': context,
+                'data': memory_data,
+                'created_at': now,
+                'updated_at': now
+            }
+            
+            # 使用upsert來更新或插入記憶
+            result = await self.db.personality_memories.update_one(
+                {'context': context},
+                {'$set': memory_doc},
+                upsert=True
+            )
+            
+            self.logger.info(f"已儲存Luna的{context}情境記憶")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"儲存Luna的人設記憶時發生錯誤：{str(e)}")
+            return False
+
+    @with_retry(retries=3, delay=1)
+    async def get_personality_memory(self, context: Optional[str] = None) -> Dict[str, Any]:
+        """獲取Luna的人設記憶
+        
+        Args:
+            context: 要獲取的特定場景記憶，如果為None則獲取所有記憶
+            
+        Returns:
+            Dict[str, Any]: 記憶內容
+        """
+        try:
+            if context:
+                memory = await self.db.personality_memories.find_one({'context': context})
+                if memory:
+                    self.logger.info(f"已獲取Luna的{context}情境記憶")
+                    return memory['data']
+                else:
+                    self.logger.warning(f"未找到Luna的{context}情境記憶")
+                    return {}
+            else:
+                # 獲取所有記憶
+                memories = {}
+                async for memory in self.db.personality_memories.find():
+                    memories[memory['context']] = memory['data']
+                
+                self.logger.info("已獲取Luna的所有記憶")
+                return memories
+                
+        except Exception as e:
+            self.logger.error(f"獲取Luna的人設記憶時發生錯誤：{str(e)}")
+            return {}
+
+    async def update_personality_memory(self, context: str, memory_data: Dict[str, Any]) -> bool:
+        """更新Luna的特定情境記憶
+        
+        Args:
+            context: 要更新的場景
+            memory_data: 新的記憶內容
+            
+        Returns:
+            bool: 是否成功更新
+        """
+        try:
+            current_time = datetime.now(self.timezone)
+            
+            # 獲取現有記憶
+            existing_memory = await self.db.personality_memories.find_one({'context': context})
+            if existing_memory:
+                # 合併新舊記憶
+                updated_data = {**existing_memory['data'], **memory_data}
+            else:
+                updated_data = memory_data
+            
+            # 更新記憶
+            result = await self.db.personality_memories.update_one(
+                {'context': context},
+                {
+                    '$set': {
+                        'data': updated_data,
+                        'updated_at': current_time
+                    }
+                },
+                upsert=True
+            )
+            
+            self.logger.info(f"已更新Luna的{context}情境記憶")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"更新Luna的人設記憶時發生錯誤：{str(e)}")
+            return False
+
+    async def delete_personality_memory(self, context: str) -> bool:
+        """刪除Luna的特定情境記憶
+        
+        Args:
+            context: 要刪除的場景
+            
+        Returns:
+            bool: 是否成功刪除
+        """
+        try:
+            result = await self.db.personality_memories.delete_one({'context': context})
+            if result.deleted_count > 0:
+                self.logger.info(f"已刪除Luna的{context}情境記憶")
+                return True
+            else:
+                self.logger.warning(f"未找到要刪除的{context}情境記憶")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"刪除Luna的人設記憶時發生錯誤：{str(e)}")
+            return False
+
+    async def get_recent_memories(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """獲取Luna最近的記憶
+        
+        Args:
+            limit: 要獲取的記憶數量
+            
+        Returns:
+            List[Dict[str, Any]]: 最近的記憶列表
+        """
+        try:
+            memories = []
+            async for memory in self.db.personality_memories.find().sort('updated_at', -1).limit(limit):
+                memories.append({
+                    'context': memory['context'],
+                    'data': memory['data'],
+                    'updated_at': memory['updated_at']
+                })
+            
+            self.logger.info(f"已獲取Luna的最近{len(memories)}條記憶")
+            return memories
+            
+        except Exception as e:
+            self.logger.error(f"獲取Luna最近記憶時發生錯誤：{str(e)}")
+            return []

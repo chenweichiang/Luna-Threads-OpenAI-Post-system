@@ -1,6 +1,12 @@
 """
-ThreadsPoster API 處理模組
-處理與 Threads API 的所有互動
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: Threads API 介面，處理與 Threads 平台的所有互動
+Last Modified: 2024.03.30
+Changes:
+- 優化 API 請求處理
+- 加強錯誤重試機制
+- 改進回應處理邏輯
 """
 
 import logging

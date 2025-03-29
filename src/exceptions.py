@@ -1,4 +1,13 @@
-"""自定義異常類別"""
+"""
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: 異常處理模組，定義系統使用的自定義異常
+Last Modified: 2024.03.30
+Changes:
+- 新增自定義異常類型
+- 優化異常處理邏輯
+- 改進錯誤訊息
+"""
 
 class ThreadsBotError(Exception):
     """基礎異常類別"""

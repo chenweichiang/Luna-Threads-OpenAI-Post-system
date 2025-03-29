@@ -1,6 +1,12 @@
 """
-OpenAI API 處理模組
-處理與 OpenAI API 的所有互動
+Version: 2024.03.30
+Author: ThreadsPoster Team
+Description: OpenAI API 介面，處理與 OpenAI 服務的所有互動
+Last Modified: 2024.03.30
+Changes:
+- 升級至最新的 OpenAI API
+- 優化提示詞處理
+- 加強錯誤處理機制
 """
 
 import logging
