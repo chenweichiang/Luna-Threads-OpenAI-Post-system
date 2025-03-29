@@ -22,7 +22,7 @@ class ThreadsAPI:
     
     def __init__(self, config):
         self.config = config
-        self.base_url = "https://graph.threads.net/v1.0"
+        self.base_url = "https://graph.threads.net/v1.0"  # 更新為正確的 API 端點
         self.session = None
         self.headers = {
             "Accept": "application/json",
@@ -54,11 +54,15 @@ class ThreadsAPI:
             await self.session.close()
             self.session = None
 
+    async def close(self):
+        """關閉 API 客戶端"""
+        await self._close_session()
+            
     async def get_new_replies(self) -> List[Dict]:
         """獲取新回覆"""
         try:
             logging.info("正在獲取新回覆")
-            url = f"{self.base_url}/me/threads"
+            url = f"{self.base_url}/{self.config.THREADS_USER_ID}/threads"
             params = {
                 "access_token": self.config.THREADS_ACCESS_TOKEN,
                 "fields": "id,text,from{username},created_time"
@@ -85,76 +89,63 @@ class ThreadsAPI:
             return []
             
     async def create_post(self, text: str) -> str:
-        """建立新貼文 (兩步驟流程)"""
+        """建立新貼文"""
         try:
             await self._init_session()
             
             # 步驟 1: 建立媒體容器
-            container_url = f"{self.base_url}/me/threads"
-            container_params = {
-                "access_token": self.config.THREADS_ACCESS_TOKEN,
-                "media_type": "TEXT",
-                "text": text
+            container_url = f"{self.base_url}/{self.config.THREADS_USER_ID}/threads"
+            params = {'access_token': self.config.THREADS_ACCESS_TOKEN}
+            data = {
+                'text': text,
+                'media_type': 'TEXT'
             }
             
-            logging.info(f"正在建立媒體容器，請求 URL: {container_url}")
-            logging.info(f"貼文內容: {text}")
-            
-            container_response = await self.session.post(container_url, params=container_params)
-            container_text = await container_response.text()
-            
-            logging.info(f"媒體容器回應: 狀態碼 {container_response.status}")
-            logging.info(f"媒體容器回應內容: {container_text}")
-            
-            if container_response.status != 200:
-                logging.error(f"建立媒體容器失敗：狀態碼 {container_response.status}，回應內容：{container_text}")
-                return ""
-                
-            try:
-                container_data = await container_response.json()
-                container_id = container_data.get("id")
+            logger.info(f"正在建立媒體容器，內容: {text}")
+            async with self.session.post(container_url, params=params, json=data) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(f"建立媒體容器失敗: {error_text}")
+                    return None
+                    
+                container_data = await response.json()
+                container_id = container_data.get('id')
                 
                 if not container_id:
-                    logging.error("無法獲取媒體容器 ID")
-                    return ""
-                    
-                logging.info(f"媒體容器建立成功，ID: {container_id}")
+                    logger.error("無法獲取媒體容器 ID")
+                    return None
                 
-                # 等待 10 秒讓伺服器處理媒體容器
-                logging.info("等待 10 秒讓伺服器處理媒體容器...")
-                await asyncio.sleep(10)
+                logger.info(f"媒體容器建立成功，ID: {container_id}")
                 
-                # 步驟 2: 發布媒體容器
-                publish_url = f"{self.base_url}/me/threads_publish"
+                # 步驟 2: 等待 30 秒讓伺服器處理媒體容器
+                await asyncio.sleep(30)
+                
+                # 步驟 3: 發布媒體容器
+                publish_url = f"{self.base_url}/{self.config.THREADS_USER_ID}/threads_publish"
                 publish_params = {
-                    "access_token": self.config.THREADS_ACCESS_TOKEN,
-                    "creation_id": container_id
+                    'access_token': self.config.THREADS_ACCESS_TOKEN,
+                    'creation_id': container_id
                 }
                 
-                logging.info(f"正在發布媒體容器，請求 URL: {publish_url}")
-                
-                publish_response = await self.session.post(publish_url, params=publish_params)
-                publish_text = await publish_response.text()
-                
-                logging.info(f"發布回應: 狀態碼 {publish_response.status}")
-                logging.info(f"發布回應內容: {publish_text}")
-                
-                if publish_response.status != 200:
-                    logging.error(f"發布媒體容器失敗：狀態碼 {publish_response.status}，回應內容：{publish_text}")
-                    return ""
+                async with self.session.post(publish_url, params=publish_params) as publish_response:
+                    if publish_response.status != 200:
+                        error_text = await publish_response.text()
+                        logger.error(f"發布媒體容器失敗: {error_text}")
+                        return None
                     
-                publish_data = await publish_response.json()
-                post_id = publish_data.get("id", "")
-                logging.info(f"貼文成功發布，ID: {post_id}")
-                return post_id
+                    publish_data = await publish_response.json()
+                    post_id = publish_data.get('id')
+                    
+                    if not post_id:
+                        logger.error("無法獲取發文 ID")
+                        return None
+                        
+                    logger.info(f"貼文發布成功，ID: {post_id}")
+                    return post_id
                 
-            except json.JSONDecodeError as e:
-                logging.error(f"解析回應 JSON 失敗：{str(e)}")
-                return ""
-            
         except Exception as e:
-            logging.error(f"發布貼文時發生錯誤：{str(e)}")
-            return ""
+            logger.error(f"建立貼文時發生錯誤: {str(e)}")
+            return None
         finally:
             await self._close_session()
             
@@ -162,7 +153,7 @@ class ThreadsAPI:
         """回覆貼文"""
         try:
             # 步驟 1: 建立回覆容器
-            container_url = f"{self.base_url}/me/threads"
+            container_url = f"{self.base_url}/{self.config.THREADS_USER_ID}/threads"
             container_params = {
                 "access_token": self.config.THREADS_ACCESS_TOKEN,
                 "media_type": "TEXT",
@@ -171,37 +162,35 @@ class ThreadsAPI:
             }
             
             await self._init_session()
-            container_response = await self.session.post(container_url, params=container_params)
-            
-            if container_response.status != 200:
-                logging.error(f"建立回覆容器失敗：{container_response.status}")
-                return False
+            async with self.session.post(container_url, params=container_params) as response:
+                if response.status != 200:
+                    logging.error(f"建立回覆容器失敗：{response.status}")
+                    return False
                 
-            container_data = await container_response.json()
-            container_id = container_data.get("id")
-            
-            if not container_id:
-                logging.error("無法獲取回覆容器 ID")
-                return False
+                container_data = await response.json()
+                container_id = container_data.get("id")
                 
-            # 等待 30 秒讓伺服器處理媒體容器
-            await asyncio.sleep(30)
-            
-            # 步驟 2: 發布回覆容器
-            publish_url = f"{self.base_url}/me/threads_publish"
-            publish_params = {
-                "access_token": self.config.THREADS_ACCESS_TOKEN,
-                "creation_id": container_id
-            }
-            
-            publish_response = await self.session.post(publish_url, params=publish_params)
-            
-            if publish_response.status != 200:
-                logging.error(f"發布回覆容器失敗：{publish_response.status}")
-                return False
+                if not container_id:
+                    logging.error("無法獲取回覆容器 ID")
+                    return False
                 
-            return True
-            
+                # 等待 30 秒讓伺服器處理媒體容器
+                await asyncio.sleep(30)
+                
+                # 步驟 2: 發布回覆容器
+                publish_url = f"{self.base_url}/{self.config.THREADS_USER_ID}/threads_publish"
+                publish_params = {
+                    "access_token": self.config.THREADS_ACCESS_TOKEN,
+                    "creation_id": container_id
+                }
+                
+                async with self.session.post(publish_url, params=publish_params) as publish_response:
+                    if publish_response.status != 200:
+                        logging.error(f"發布回覆容器失敗：{publish_response.status}")
+                        return False
+                    
+                    return True
+                
         except Exception as e:
             logging.error(f"回覆貼文時發生錯誤：{str(e)}")
             return False

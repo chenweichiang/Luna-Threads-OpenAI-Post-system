@@ -16,6 +16,9 @@ from src.exceptions import DatabaseError
 from pymongo import ReturnDocument
 import asyncio
 from functools import wraps
+from pymongo import UpdateOne
+from motor.motor_asyncio import AsyncIOMotorClient
+from datetime import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,9 @@ def with_retry(retries=3, delay=1):
                 except Exception as e:
                     last_error = e
                     if attempt < retries - 1:
-                        await asyncio.sleep(delay * (attempt + 1))
+                        delay_time = delay * (2 ** attempt)  # 指數退避
+                        logger.warning(f"操作失敗，{delay_time} 秒後重試第 {attempt + 1} 次: {str(e)}")
+                        await asyncio.sleep(delay_time)
             logger.error(f"操作失敗，已重試 {retries} 次: {str(last_error)}")
             raise last_error
         return wrapper
@@ -42,6 +47,11 @@ class Database:
     
     _instance = None
     _initialized = False
+    _max_pool_size = 50
+    _min_pool_size = 10
+    _max_idle_time_ms = 30000
+    _connect_timeout_ms = 5000
+    _server_selection_timeout_ms = 5000
     
     def __new__(cls, *args, **kwargs):
         """單例模式實現"""
@@ -71,11 +81,13 @@ class Database:
             try:
                 self.client = motor.motor_asyncio.AsyncIOMotorClient(
                     config.MONGODB_URI,
-                    serverSelectionTimeoutMS=5000,
-                    maxPoolSize=50,
-                    minPoolSize=10,
-                    maxIdleTimeMS=30000,
-                    connectTimeoutMS=5000
+                    serverSelectionTimeoutMS=self._server_selection_timeout_ms,
+                    maxPoolSize=self._max_pool_size,
+                    minPoolSize=self._min_pool_size,
+                    maxIdleTimeMS=self._max_idle_time_ms,
+                    connectTimeoutMS=self._connect_timeout_ms,
+                    retryWrites=True,
+                    retryReads=True
                 )
                 self.db = self.client[config.MONGODB_DB_NAME]
             except Exception as e:
@@ -92,6 +104,7 @@ class Database:
         # 快取設定
         self._cache = {}
         self._cache_timeout = 300  # 5 分鐘快取過期
+        self._last_cleanup = datetime.now(self.timezone)
         
         self._initialized = True
         
@@ -290,43 +303,85 @@ class Database:
             self.logger.error(f"獲取用戶對話歷史時發生錯誤：{str(e)}")
             return []
 
-    @with_retry()
-    async def save_post(self, post_id: str, content: str, user_id: Optional[str] = None) -> bool:
-        """儲存貼文記錄並更新主題追蹤"""
+    @with_retry(retries=3, delay=1)
+    async def save_post(self, post_id: str, content: str, topics: List[str], sentiment: Dict[str, float]) -> bool:
+        """儲存發文記錄
+        
+        Args:
+            post_id: 貼文 ID
+            content: 貼文內容
+            topics: 貼文主題列表
+            sentiment: 情感分析結果
+            
+        Returns:
+            bool: 是否成功
+        """
         try:
-            # 提取主題
-            topics = await self.extract_topics(content)
-            current_time = datetime.now(self.timezone)
+            # 準備文章資料
+            post_data = {
+                "post_id": post_id,
+                "content": content,
+                "topics": topics,
+                "sentiment": sentiment,
+                "created_at": datetime.now(self.timezone)
+            }
             
-            # 儲存貼文
-            post_result = await self.posts.update_one(
-                {"post_id": post_id},
-                {
-                    "$set": {
-                        "content": content,
-                        "user_id": user_id,
-                        "topics": topics,
-                        "created_at": current_time
-                    }
-                },
-                upsert=True
-            )
+            # 儲存文章
+            result = await self.posts.insert_one(post_data)
             
-            # 更新主題使用時間
-            for topic in topics:
-                await self.post_topics.update_one(
-                    {"topic": topic},
-                    {
-                        "$set": {"last_used": current_time},
-                        "$inc": {"use_count": 1}
-                    },
-                    upsert=True
-                )
-            
-            return post_result.acknowledged
+            if result.inserted_id:
+                self.logger.info(f"文章儲存成功，ID: {post_id}")
+                
+                # 更新主題使用時間
+                update_ops = []
+                for topic in topics:
+                    update_ops.append(
+                        UpdateOne(
+                            {"topic": topic},
+                            {
+                                "$set": {"last_used": datetime.now(self.timezone)},
+                                "$inc": {"usage_count": 1}
+                            },
+                            upsert=True
+                        )
+                    )
+                
+                if update_ops:
+                    await self.post_topics.bulk_write(update_ops)
+                    
+                return True
+            else:
+                self.logger.error("文章儲存失敗")
+                return False
+                
         except Exception as e:
             self.logger.error(f"儲存貼文記錄失敗: {str(e)}")
             return False
+            
+    @with_retry(retries=3, delay=1)
+    async def get_post(self, post_id: str) -> Optional[Dict[str, Any]]:
+        """獲取貼文記錄
+        
+        Args:
+            post_id: 貼文 ID
+            
+        Returns:
+            Optional[Dict[str, Any]]: 貼文資料或 None
+        """
+        try:
+            post = await self.posts.find_one({"post_id": post_id})
+            if post:
+                return {
+                    "post_id": post["post_id"],
+                    "content": post["content"],
+                    "topics": post["topics"],
+                    "sentiment": post["sentiment"],
+                    "created_at": post["created_at"]
+                }
+            return None
+        except Exception as e:
+            self.logger.error(f"獲取貼文記錄失敗: {str(e)}")
+            return None
 
     async def get_post_history(self, limit: int = 5) -> List[Dict]:
         """獲取貼文歷史"""
@@ -459,12 +514,25 @@ class Database:
 
     async def close(self):
         """關閉資料庫連接"""
-        if hasattr(self, 'client'):
-            await self.cleanup_cache()
-            self.client.close()
-            self.logger.info("MongoDB 連接已關閉")
-        else:
-            self.logger.error("MongoDB 連接不存在")
+        try:
+            if hasattr(self, 'client'):
+                await self.cleanup_cache()
+                self.client.close()
+                self.logger.info("MongoDB 連接已關閉")
+                
+                # 清理資源
+                self.client = None
+                self.db = None
+                self.conversations = None
+                self.posts = None
+                self.replies = None
+                self.settings = None
+                self.post_topics = None
+                self._cache = {}
+                
+            self._initialized = False
+        except Exception as e:
+            self.logger.error(f"關閉 MongoDB 連接時發生錯誤: {str(e)}")
 
     async def add_interaction(self, user_id: str, content: str, is_bot: bool) -> bool:
         """添加互動記錄
@@ -774,3 +842,58 @@ class Database:
         except Exception as e:
             self.logger.error(f"獲取最近貼文失敗: {str(e)}")
             return []
+
+    async def check_daily_post_limit(self) -> bool:
+        """檢查是否達到每日發文上限
+        
+        Returns:
+            bool: True 表示已達到上限，False 表示未達到上限
+        """
+        try:
+            # 獲取今日開始時間（台北時區）
+            tz = timezone(timedelta(hours=8))
+            today = datetime.now(tz).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            
+            # 查詢今日發文數量
+            count = await self.posts.count_documents({
+                "created_at": {"$gte": today}
+            })
+            
+            # 檢查是否達到上限（預設為 10 篇）
+            limit_reached = count >= 10
+            if limit_reached:
+                self.logger.info(f"今日已發布 {count} 篇文章，達到上限")
+            else:
+                self.logger.debug(f"今日已發布 {count} 篇文章")
+            return limit_reached
+            
+        except Exception as e:
+            self.logger.error(f"檢查每日發文限制時發生錯誤: {e}")
+            return True  # 發生錯誤時，為安全起見返回已達上限
+
+    async def clear_today_posts(self) -> bool:
+        """清除今日發文記錄（僅用於測試）
+        
+        Returns:
+            bool: 是否成功清除
+        """
+        try:
+            # 獲取今日開始時間（台北時區）
+            tz = timezone(timedelta(hours=8))
+            today = datetime.now(tz).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            
+            # 刪除今日的貼文記錄
+            result = await self.posts.delete_many({
+                "created_at": {"$gte": today}
+            })
+            
+            self.logger.info(f"已清除今日 {result.deleted_count} 篇貼文記錄")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"清除今日貼文記錄時發生錯誤: {e}")
+            return False

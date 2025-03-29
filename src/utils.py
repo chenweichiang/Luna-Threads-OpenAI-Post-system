@@ -158,25 +158,8 @@ def sanitize_text(text: str, max_length: int = 25) -> str:
     # 確保文字長度至少10個字
     if len(text) < 10:
         return ""
-        
-    # 根據關鍵字選擇emoji
-    emoji = ''
-    if any(word in text for word in ['BL', 'CP', '配對', '戀愛', '心動', '害羞']):
-        emoji = '🥰'
-    elif any(word in text for word in ['遊戲', 'Switch', 'Quest', '玩']):
-        emoji = '🎮'
-    elif any(word in text for word in ['動畫', '漫畫', '番', '作品']):
-        emoji = '✨'
-    elif any(word in text for word in ['人工智慧', '科技', '新功能']):
-        emoji = '🤖'
-    elif any(word in text for word in ['iPhone', 'Macbook', '手機', '電腦']):
-        emoji = '📱'
     
-    # 如果沒有找到對應的emoji，使用預設的
-    if not emoji:
-        emoji = '💕'
-    
-    return text + emoji
+    return text
 
 def safe_json_loads(json_str: str) -> Optional[Any]:
     """安全的 JSON 解析"""
