@@ -30,11 +30,11 @@ class Config:
         self.LOG_PATH = kwargs.get("LOG_PATH", os.getenv("LOG_PATH", "logs/threads_poster.log"))
 
         # 發文時間設定
-        self.PRIME_POST_START = int(kwargs.get("PRIME_POST_START", os.getenv("PRIME_POST_START", "20")))
-        self.PRIME_POST_END = int(kwargs.get("PRIME_POST_END", os.getenv("PRIME_POST_END", "2")))
-        self.MIN_POSTS_PER_DAY = int(kwargs.get("MIN_POSTS_PER_DAY", os.getenv("MIN_POSTS_PER_DAY", "3")))
-        self.MAX_POSTS_PER_DAY = int(kwargs.get("MAX_POSTS_PER_DAY", os.getenv("MAX_POSTS_PER_DAY", "8")))
-        self.PRIME_TIME_POST_RATIO = float(kwargs.get("PRIME_TIME_POST_RATIO", os.getenv("PRIME_TIME_POST_RATIO", "0.7")))
+        self.PRIME_POST_START = int(kwargs.get("PRIME_POST_START", os.getenv("PRIME_POST_START", "20")))  # 晚上8點
+        self.PRIME_POST_END = int(kwargs.get("PRIME_POST_END", os.getenv("PRIME_POST_END", "2")))      # 凌晨2點
+        self.MIN_POSTS_PER_DAY = int(kwargs.get("MIN_POSTS_PER_DAY", os.getenv("MIN_POSTS_PER_DAY", "5")))  # 每日最少5篇
+        self.MAX_POSTS_PER_DAY = int(kwargs.get("MAX_POSTS_PER_DAY", os.getenv("MAX_POSTS_PER_DAY", "10")))  # 每日最多10篇
+        self.PRIME_TIME_POST_RATIO = float(kwargs.get("PRIME_TIME_POST_RATIO", os.getenv("PRIME_TIME_POST_RATIO", "0.7")))  # 黃金時段發文比例
 
         # API 設定
         self.API_BASE_URL = kwargs.get("API_BASE_URL", os.getenv("THREADS_API_BASE_URL", "https://www.threads.net/api/v1"))
@@ -73,10 +73,18 @@ class Config:
         # 系統設定
         self.SYSTEM_CONFIG = kwargs.get("SYSTEM_CONFIG", {
             "timezone": os.getenv("TIMEZONE", "Asia/Taipei"),
-            "post_interval": int(os.getenv("POST_INTERVAL", "0")),  # 發文間隔（秒）
-            "reply_interval": int(os.getenv("REPLY_INTERVAL", "0")),  # 回覆間隔（秒）
-            "max_daily_posts": int(os.getenv("MAX_DAILY_POSTS", "999999")),   # 每日最大發文數
-            "max_daily_replies": int(os.getenv("MAX_DAILY_REPLIES", "999999")),  # 每日最大回覆數
+            "post_interval": {
+                "prime_time": {
+                    "min": 15 * 60,  # 主要時段最小間隔（15分鐘）
+                    "max": 45 * 60   # 主要時段最大間隔（45分鐘）
+                },
+                "other_time": {
+                    "min": 60 * 60,  # 其他時段最小間隔（1小時）
+                    "max": 180 * 60  # 其他時段最大間隔（3小時）
+                }
+            },
+            "max_daily_posts": 10,    # 每日最大發文數
+            "min_daily_posts": 5,     # 每日最少發文數
             "log_level": os.getenv("LOG_LEVEL", "DEBUG")
         })
         
