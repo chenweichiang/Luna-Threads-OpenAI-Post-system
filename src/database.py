@@ -43,129 +43,130 @@ def with_retry(retries=3, delay=1):
     return decorator
 
 class Database:
-    """資料庫處理類"""
+    """資料庫處理類別"""
     
-    _instance = None
-    _initialized = False
-    _max_pool_size = 50
-    _min_pool_size = 10
-    _max_idle_time_ms = 30000
-    _connect_timeout_ms = 5000
-    _server_selection_timeout_ms = 5000
-    
-    def __new__(cls, *args, **kwargs):
-        """單例模式實現"""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    def __init__(self, config, is_test: bool = False):
-        """初始化資料庫連接
+    def __init__(self, config: Config):
+        """初始化資料庫處理器
         
         Args:
             config: 設定物件
-            is_test: 是否為測試環境
         """
-        if self._initialized:
-            return
-            
         self.config = config
         self.logger = logging.getLogger(__name__)
         
-        if is_test:
-            # 使用 mongomock-motor 進行測試
-            self.client = mongomock_motor.AsyncIOMotorClient()
-            self.db = self.client[config.MONGODB_DB_NAME]
-        else:
-            # 使用實際的 MongoDB 連接
-            try:
-                self.client = motor.motor_asyncio.AsyncIOMotorClient(
-                    config.MONGODB_URI,
-                    serverSelectionTimeoutMS=self._server_selection_timeout_ms,
-                    maxPoolSize=self._max_pool_size,
-                    minPoolSize=self._min_pool_size,
-                    maxIdleTimeMS=self._max_idle_time_ms,
-                    connectTimeoutMS=self._connect_timeout_ms,
-                    retryWrites=True,
-                    retryReads=True
-                )
-                self.db = self.client[config.MONGODB_DB_NAME]
-            except Exception as e:
-                self.logger.error(f"MongoDB 連接失敗：{str(e)}")
-                raise
-                
-        self.conversations = self.db[config.MONGODB_COLLECTION]
-        self.posts = self.db.posts
-        self.replies = self.db.replies
-        self.settings = self.db.settings
-        self.post_topics = self.db.post_topics  # 新增：用於追蹤文章主題
-        self.timezone = pytz.timezone("Asia/Taipei")  # 直接使用固定時區
+        # 初始化 MongoDB 客戶端
+        self.client = AsyncIOMotorClient(self.config.MONGODB_URI)
+        self.db = self.client[self.config.MONGODB_DB_NAME]
+        self.posts = self.db[self.config.MONGODB_COLLECTION]
+        self._initialized = False
         
-        # 快取設定
-        self._cache = {}
-        self._cache_timeout = 300  # 5 分鐘快取過期
-        self._last_cleanup = datetime.now(self.timezone)
-        
-        self._initialized = True
-        
-    @with_retry(retries=3, delay=1)
-    async def init_db(self):
-        """初始化資料庫"""
+    async def initialize(self):
+        """初始化資料庫連接"""
+        if self._initialized:
+            return
+            
         try:
-            # 建立複合索引以提升查詢效能
-            await self.posts.create_index([
-                ("post_id", 1),
-                ("created_at", -1)
-            ], unique=True)
+            # 建立索引
+            await self.posts.create_index([("post_id", 1)], unique=True)
+            await self.posts.create_index([("created_at", -1)])
             
-            await self.posts.create_index([("topics", 1)])  # 新增：主題索引
-            await self.posts.create_index([("content", "text")])  # 新增：全文檢索
-            
-            await self.post_topics.create_index([
-                ("topic", 1),
-                ("last_used", -1)
-            ])
-            
-            await self.replies.create_index([
-                ("reply_id", 1),
-                ("is_processed", 1),
-                ("created_at", -1)
-            ])
-            
-            await self.conversations.create_index([
-                ("user_id", 1),
-                ("created_at", -1)
-            ])
-            
-            await self.settings.create_index([("key", 1)], unique=True)
-            
-            # 建立 TTL 索引自動清理過期數據
-            await self.conversations.create_index(
-                "created_at",
-                expireAfterSeconds=self.config.MEMORY_CONFIG['retention_days'] * 86400
-            )
-            
+            self._initialized = True
             self.logger.info("資料庫初始化完成")
             
         except Exception as e:
-            self.logger.error(f"資料庫初始化失敗: {str(e)}")
-            raise
+            self.logger.error(f"資料庫初始化失敗：{str(e)}")
+            raise DatabaseError("資料庫初始化失敗") from e
+            
+    async def close(self):
+        """關閉資料庫連接"""
+        if hasattr(self, 'client'):
+            self.client.close()
+            self.logger.info("MongoDB 連接已關閉")
+            
+    async def save_article(self, post_id: str, content: str, topics: List[str], sentiment: Dict[str, float]) -> bool:
+        """儲存文章
+        
+        Args:
+            post_id: 文章ID
+            content: 文章內容
+            topics: 主題列表
+            sentiment: 情感分析結果
+            
+        Returns:
+            bool: 是否儲存成功
+        """
+        try:
+            now = datetime.now(pytz.UTC)
+            document = {
+                "post_id": post_id,
+                "content": content,
+                "topics": topics,
+                "sentiment": sentiment,
+                "created_at": now
+            }
+            
+            await self.posts.insert_one(document)
+            self.logger.info(f"文章儲存成功，ID: {post_id}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"儲存文章失敗：{str(e)}")
+            return False
             
     async def get_today_posts_count(self) -> int:
-        """獲取今日發文數量"""
+        """獲取今日發文數量
+        
+        Returns:
+            int: 今日發文數量
+        """
         try:
-            today_start = datetime.now(self.timezone).replace(
+            # 取得今日開始時間（台北時間）
+            tz = pytz.timezone('Asia/Taipei')
+            today_start = datetime.now(tz).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
             
+            # 轉換為 UTC 時間進行查詢
+            today_start_utc = today_start.astimezone(pytz.UTC)
+            
+            # 查詢今日發文數量
             count = await self.posts.count_documents({
-                "created_at": {"$gte": today_start}
+                "created_at": {"$gte": today_start_utc}
             })
             
             return count
+            
         except Exception as e:
-            self.logger.error(f"獲取今日發文數量失敗: {str(e)}")
+            self.logger.error(f"獲取今日發文數量失敗：{str(e)}")
             return 0
+            
+    async def clear_today_posts(self) -> bool:
+        """清除今日發文記錄
+        
+        Returns:
+            bool: 是否清除成功
+        """
+        try:
+            # 取得今日開始時間（台北時間）
+            tz = pytz.timezone('Asia/Taipei')
+            today_start = datetime.now(tz).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            
+            # 轉換為 UTC 時間進行刪除
+            today_start_utc = today_start.astimezone(pytz.UTC)
+            
+            # 刪除今日發文記錄
+            result = await self.posts.delete_many({
+                "created_at": {"$gte": today_start_utc}
+            })
+            
+            self.logger.info(f"已清除今日 {result.deleted_count} 篇貼文記錄")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"清除今日發文記錄失敗：{str(e)}")
+            return False
 
     async def init_indexes(self):
         """初始化索引"""
@@ -512,28 +513,6 @@ class Database:
             self.logger.error(f"儲存回覆記錄失敗: {str(e)}")
             return False
 
-    async def close(self):
-        """關閉資料庫連接"""
-        try:
-            if hasattr(self, 'client'):
-                await self.cleanup_cache()
-                self.client.close()
-                self.logger.info("MongoDB 連接已關閉")
-                
-                # 清理資源
-                self.client = None
-                self.db = None
-                self.conversations = None
-                self.posts = None
-                self.replies = None
-                self.settings = None
-                self.post_topics = None
-                self._cache = {}
-                
-            self._initialized = False
-        except Exception as e:
-            self.logger.error(f"關閉 MongoDB 連接時發生錯誤: {str(e)}")
-
     async def add_interaction(self, user_id: str, content: str, is_bot: bool) -> bool:
         """添加互動記錄
         
@@ -872,28 +851,3 @@ class Database:
         except Exception as e:
             self.logger.error(f"檢查每日發文限制時發生錯誤: {e}")
             return True  # 發生錯誤時，為安全起見返回已達上限
-
-    async def clear_today_posts(self) -> bool:
-        """清除今日發文記錄（僅用於測試）
-        
-        Returns:
-            bool: 是否成功清除
-        """
-        try:
-            # 獲取今日開始時間（台北時區）
-            tz = timezone(timedelta(hours=8))
-            today = datetime.now(tz).replace(
-                hour=0, minute=0, second=0, microsecond=0
-            )
-            
-            # 刪除今日的貼文記錄
-            result = await self.posts.delete_many({
-                "created_at": {"$gte": today}
-            })
-            
-            self.logger.info(f"已清除今日 {result.deleted_count} 篇貼文記錄")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"清除今日貼文記錄時發生錯誤: {e}")
-            return False

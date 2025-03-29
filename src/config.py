@@ -8,6 +8,7 @@ import pytz
 import logging
 from dotenv import load_dotenv
 from typing import Dict, Any, List, Union
+from datetime import datetime, time
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,13 @@ class Config:
         self.TIMEZONE = pytz.timezone("Asia/Taipei")  # 直接使用固定時區
         self.LOG_LEVEL = kwargs.get("LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO"))
         self.LOG_PATH = kwargs.get("LOG_PATH", os.getenv("LOG_PATH", "logs/threads_poster.log"))
+
+        # 發文時間設定
+        self.PRIME_POST_START = int(kwargs.get("PRIME_POST_START", os.getenv("PRIME_POST_START", "20")))
+        self.PRIME_POST_END = int(kwargs.get("PRIME_POST_END", os.getenv("PRIME_POST_END", "2")))
+        self.MIN_POSTS_PER_DAY = int(kwargs.get("MIN_POSTS_PER_DAY", os.getenv("MIN_POSTS_PER_DAY", "3")))
+        self.MAX_POSTS_PER_DAY = int(kwargs.get("MAX_POSTS_PER_DAY", os.getenv("MAX_POSTS_PER_DAY", "8")))
+        self.PRIME_TIME_POST_RATIO = float(kwargs.get("PRIME_TIME_POST_RATIO", os.getenv("PRIME_TIME_POST_RATIO", "0.7")))
 
         # API 設定
         self.API_BASE_URL = kwargs.get("API_BASE_URL", os.getenv("THREADS_API_BASE_URL", "https://www.threads.net/api/v1"))
@@ -75,14 +83,15 @@ class Config:
         # 角色設定
         self.CHARACTER_CONFIG = {
             "基本資料": {
-                "年齡": 28,
+                "年齡": 20,
                 "性別": "女性",
                 "國籍": "台灣",
-                "興趣": ["ACG文化", "電腦科技", "BL作品"],
+                "興趣": ["ACG文化", "電腦科技", "遊戲"],
                 "個性特徵": [
-                    "喜歡說曖昧的話",
+                    "活潑開朗",
                     "了解科技",
-                    "善於互動"
+                    "善於互動",
+                    "喜歡分享"
                 ]
             },
             "回文規則": {
@@ -123,7 +132,7 @@ class Config:
                 },
                 "night": {
                     "mood": "慵懶放鬆",
-                    "topics": ["BL", "夜晚", "思考"],
+                    "topics": ["遊戲", "夜晚", "思考"],
                     "style": "慵懶神秘"
                 }
             }
@@ -139,9 +148,9 @@ class Config:
                 "動畫", "漫畫", "輕小說", "Cosplay", "同人創作", "聲優",
                 "二次元", "動漫", "アニメ", "コスプレ", "同人誌", "漫展"
             ],
-            "BL": [
-                "BL漫畫", "BL小說", "美劇", "CP", "同人文",
-                "耽美", "BL", "Boys Love", "腐女", "配對", "攻受"
+            "遊戲": [
+                "電玩", "手遊", "主機遊戲", "遊戲實況", "電競", "RPG",
+                "策略遊戲", "解謎遊戲", "音樂遊戲", "格鬥遊戲", "開放世界"
             ],
             "生活": [
                 "美食", "旅遊", "時尚", "音樂", "電影", "寵物", "攝影",
@@ -231,6 +240,41 @@ class Config:
     def get_sentiment_words(self) -> Dict[str, list]:
         """獲取情感詞彙設定"""
         return self.SENTIMENT_WORDS
+
+    def is_prime_time(self, hour: int = None) -> bool:
+        """檢查指定時間是否為主要發文時段
+        
+        Args:
+            hour: 要檢查的小時，如果不指定則使用當前時間
+            
+        Returns:
+            bool: 是否為主要發文時段
+        """
+        if hour is None:
+            hour = datetime.now(self.TIMEZONE).hour
+            
+        if self.PRIME_POST_START <= self.PRIME_POST_END:
+            return self.PRIME_POST_START <= hour <= self.PRIME_POST_END
+        else:  # 跨越午夜的情況
+            return hour >= self.PRIME_POST_START or hour <= self.PRIME_POST_END
+
+    def get_post_schedule(self) -> Dict[str, Any]:
+        """獲取發文排程設定
+        
+        Returns:
+            Dict[str, Any]: 發文排程設定
+        """
+        return {
+            "prime_time": {
+                "start": self.PRIME_POST_START,
+                "end": self.PRIME_POST_END
+            },
+            "posts_per_day": {
+                "min": self.MIN_POSTS_PER_DAY,
+                "max": self.MAX_POSTS_PER_DAY
+            },
+            "prime_time_ratio": self.PRIME_TIME_POST_RATIO
+        }
 
 # 創建全局配置實例
 config = Config()
