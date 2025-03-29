@@ -102,8 +102,8 @@ src/
    - API 調用監控
 
 ## 安裝需求
-- Python 3.8+
-- MongoDB 4.4+
+- Python 3.10+
+- MongoDB 最新版本
 - OpenAI API 金鑰
 - Threads API 存取權限
 
@@ -158,14 +158,14 @@ SYSTEM_CONFIG = {
 ```json
 {
   "基本資料": {
-    "年齡": 28,
+    "年齡": 20,
     "性別": "女性",
     "國籍": "台灣",
-    "興趣": ["ACG文化", "電腦科技", "BL作品"],
+    "興趣": ["ACG文化", "電腦科技", "遊戲"],
     "個性特徵": [
-      "喜歡說曖昧的話",
       "了解科技",
-      "善於互動"
+      "善於互動",
+      "喜歡分享"
     ]
   }
 }
@@ -218,8 +218,8 @@ SYSTEM_CONFIG = {
 
 ## Threads Auto Reply and Content Publishing System
 
-Version: 1.1.0
-Last Updated: 2025-03-29
+Version: 1.1.3
+Last Updated: 2025-03-30
 
 ### System Overview
 This is an OpenAI-based Threads auto-reply and content publishing system. The system automatically generates and publishes content based on configured character personalities, simulating real user interactions. The system runs in a cloud environment and uses GitHub Actions for automated deployment and operation.
@@ -229,11 +229,11 @@ This is an OpenAI-based Threads auto-reply and content publishing system. The sy
 - Smart analysis and reply to user interactions
 - Auto-adjust posting frequency and style based on time
 - Memory system for interaction history tracking
-- Support multiple topics: ACG, Tech, BL, etc.
+- Support multiple topics: ACG, Tech, Gaming, etc.
 - Auto-add appropriate emojis
 
 ### Technical Features
-- Content generation using OpenAI GPT-3.5
+- Content generation using OpenAI GPT-4
 - Python async programming
 - MongoDB for interaction records
 - GitHub Actions automation
@@ -241,9 +241,9 @@ This is an OpenAI-based Threads auto-reply and content publishing system. The sy
 - Smart text sanitization and formatting
 
 ### System Requirements
-- Python 3.9+
+- Python 3.10+
+- Latest MongoDB version
 - OpenAI API key
-- MongoDB database
 - Threads API access
 
 ### Installation
@@ -304,6 +304,12 @@ System configurations are located in the `config` directory:
 - Multi-topic content generation
 - Complete error handling
 - Smart text processing system
+
+#### 1.1.3 (2025-03-30)
+- Updated system overview
+- Added new topics: Gaming
+- Enhanced text sanitization
+- Improved error handling
 
 ---
 
@@ -397,6 +403,12 @@ tail -f logs/threadsposter.log
 - 多様なトピックのコンテンツ生成
 - 完全なエラー処理機構
 - スマートテキスト処理システム
+
+#### 1.1.3 (2025-03-30)
+- システム概要の更新
+- 新しいトピックの追加: Gaming
+- テキストのサニタイズの強化
+- エラー処理の改善
 
 ---
 
