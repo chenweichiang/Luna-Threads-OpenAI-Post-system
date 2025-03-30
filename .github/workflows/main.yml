@@ -1,4 +1,3 @@
-# 已禁用的舊工作流程，請使用 python_workflow.yml 替代
 name: ThreadsPoster 自動化工作流程
 
 on:
