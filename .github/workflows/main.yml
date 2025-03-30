@@ -31,16 +31,8 @@ jobs:
         with:
           fetch-depth: 1  # 減少 Git 歷史以加快檢出
 
-      - name: 設定 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: 安裝依賴
-        run: |
-          python -m pip install --upgrade pip
-          pip install --no-cache-dir -r requirements.txt
+      - name: 設定 Docker Compose
+        uses: docker/setup-buildx-action@v3
 
       - name: 建立日誌目錄
         run: mkdir -p logs
@@ -59,8 +51,8 @@ jobs:
           THREADS_USER_ID=${{ secrets.THREADS_USER_ID }}
 
           # MongoDB 設定
-          MONGODB_URI=${{ secrets.MONGODB_URI }}
-          MONGODB_DB=threadsposter
+          MONGODB_URI=mongodb://mongodb:27017/threads_db
+          MONGODB_DB_NAME=threads_db
           MONGODB_COLLECTION=posts
 
           # 系統設定
@@ -115,7 +107,7 @@ jobs:
           async def init_db():
               # 獲取環境變數
               mongo_uri = os.getenv("MONGODB_URI")
-              db_name = os.getenv("MONGODB_DB", "threadsposter")
+              db_name = os.getenv("MONGODB_DB_NAME", "threads_db")
               collection_name = os.getenv("MONGODB_COLLECTION", "posts")
               
               if not mongo_uri:
@@ -186,19 +178,7 @@ jobs:
           # 安裝 psutil 以供檢查記憶體腳本使用
           pip install psutil
 
-      - name: 檢查環境變數
-        run: python src/check_env.py
-
-      - name: 初始化資料庫
-        run: python src/init_db.py
-
-      - name: 檢查記憶體使用量
-        run: python src/check_memory.py
-
-      - name: 運行程式
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          PYTHONUNBUFFERED: 1
+      - name: 構建並啟動 Docker Compose
         run: |
           # 創建運行腳本
           cat > run_with_timeout.sh << 'EOL'
@@ -207,48 +187,49 @@ jobs:
           # 設定超時時間 (從環境變數獲取，預設20分鐘)
           TIMEOUT=${EXECUTION_TIMEOUT:-1200}
           
-          # 啟動主程式
-          python -m src.main &
-          PID=$!
+          # 啟動 Docker Compose
+          docker-compose up -d
           
-          # 檢查程式是否在指定時間內完成
-          for ((i=1; i<=$TIMEOUT; i++)); do
-            # 檢查程式是否還在運行
-            if ! ps -p $PID > /dev/null; then
-              echo "程式已完成執行"
-              exit 0
-            fi
+          # 檢查容器是否在運行
+          if [ $(docker ps -q -f name=threads_poster) ]; then
+            echo "容器已啟動，開始監控日誌..."
             
-            # 每30秒檢查一次日誌
-            if [ $((i % 30)) -eq 0 ]; then
-              echo "已運行 $i 秒..."
-              
-              # 檢查是否有錯誤或是否已發文完成
-              if [ -f "logs/threads_poster.log" ]; then
-                if grep -q "發文成功" logs/threads_poster.log; then
-                  echo "檢測到發文成功，結束程式"
-                  kill -15 $PID
-                  sleep 5
-                  kill -9 $PID 2>/dev/null || true
-                  exit 0
-                fi
+            # 檢查程式是否在指定時間內完成
+            for ((i=1; i<=$TIMEOUT; i++)); do
+              # 每30秒檢查一次日誌
+              if [ $((i % 30)) -eq 0 ]; then
+                echo "已運行 $i 秒..."
                 
-                if grep -q "ERROR\|CRITICAL" logs/threads_poster.log; then
-                  echo "檢測到錯誤日誌："
-                  grep -A 5 "ERROR\|CRITICAL" logs/threads_poster.log | tail -n 10
+                # 從容器中複製日誌
+                docker cp threads_poster:/app/logs/threads_poster.log ./logs/ 2>/dev/null || true
+                
+                # 檢查是否有錯誤或是否已發文完成
+                if [ -f "logs/threads_poster.log" ]; then
+                  if grep -q "發文成功" logs/threads_poster.log; then
+                    echo "檢測到發文成功，結束程式"
+                    docker-compose down
+                    exit 0
+                  fi
+                  
+                  if grep -q "ERROR\|CRITICAL" logs/threads_poster.log; then
+                    echo "檢測到錯誤日誌："
+                    grep -A 5 "ERROR\|CRITICAL" logs/threads_poster.log | tail -n 10
+                  fi
                 fi
               fi
-            fi
+              
+              sleep 1
+            done
             
-            sleep 1
-          done
-          
-          # 如果超時則終止程式
-          echo "程式執行超過 $TIMEOUT 秒，強制終止"
-          kill -15 $PID
-          sleep 5
-          kill -9 $PID 2>/dev/null || true
-          exit 1
+            # 如果超時則終止容器
+            echo "程式執行超過 $TIMEOUT 秒，強制終止"
+            docker-compose down
+            exit 1
+          else
+            echo "容器啟動失敗"
+            docker-compose logs
+            exit 1
+          fi
           EOL
           
           # 設定執行權限

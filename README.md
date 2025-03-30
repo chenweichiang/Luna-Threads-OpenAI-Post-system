@@ -474,220 +474,76 @@ MIT 授權允許您自由使用、修改和分發本專案，無論是商業還�
 - 加強資料庫操作效能
 - 改進資料備份機制
 
----
+## 在 GitHub 上運行系統
 
-# English
+本系統支援透過 GitHub Actions 自動運行，按照以下步驟設定：
 
-## Threads Auto Reply and Content Publishing System
+1. **Fork 本專案**
+   - 在 GitHub 上 Fork 此專案到您的帳戶
 
-Version: 1.1.8
-Last Updated: 2025.03.30
+2. **設定 Repository Secrets**
+   在專案設定中添加以下 Secrets：
+   - `OPENAI_API_KEY`: 您的 OpenAI API 金鑰
+   - `THREADS_APP_ID`: Threads 應用程式 ID
+   - `THREADS_APP_SECRET`: Threads 應用程式密鑰
+   - `THREADS_ACCESS_TOKEN`: Threads API 存取令牌
+   - `THREADS_USER_ID`: Threads 用戶 ID
+   - `MONGODB_URI`: MongoDB 連接字串（可使用 MongoDB Atlas 免費版）
 
-### System Overview
-This is an OpenAI-based Threads auto-reply and content publishing system. The system automatically generates and publishes content based on configured character personalities, simulating real user interactions. The system features a comprehensive character memory system and runs in a cloud environment.
+3. **啟用 GitHub Actions**
+   - 進入 Actions 標籤頁
+   - 選擇並啟用 `ThreadsPoster 自動化工作流程`
+   - 點擊 "Run workflow" 按鈕手動觸發首次運行
 
-### Main Features
-- Auto-generate character-based posts
-- Smart analysis and reply to user interactions
-- Auto-adjust posting frequency and style based on time
-- Character memory system for consistent personality
-- Support multiple topics: Gaming, Anime, Collecting
-- Auto-add appropriate emojis
-- Emotional analysis and response
-- Performance monitoring and analysis
-- Resource usage optimization
+4. **檢視運行結果**
+   - 在 Actions 頁面查看運行結果
+   - 檢查上傳的日誌文件了解詳細運行情況
 
-### Technical Features
-- Content generation using OpenAI GPT-4
-- Python async programming
-- MongoDB for interaction and memory records
-- Complete error handling and retry mechanism
-- Smart text sanitization and formatting
-- Character memory optimization
-- Connection pool optimization
-- Automatic memory usage monitoring
-- API request performance tracking
+5. **自定義發文排程**
+   - 編輯 `.github/workflows/main.yml` 檔案
+   - 調整 `cron` 表達式來設定自訂發文頻率
 
-### System Requirements
-- Python 3.10+
-- Latest MongoDB version
-- OpenAI API key
-- Threads API access
+### Docker 設定（本地運行）
 
-### Installation
-1. Clone the repository:
-```bash
-git clone https://github.com/chenweichiang/AI-Tools-ThreadsPoster.git
-cd ThreadsPoster
-```
+您也可以使用 Docker 在本地運行系統：
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+1. **安裝 Docker**
+   - 從 [Docker 官網](https://www.docker.com/) 下載並安裝
 
-3. Set up environment variables:
-```bash
-cp .env.example .env
-# Edit .env file with your API keys and settings
-```
+2. **創建環境變數檔案**
+   ```bash
+   cp .env.example .env
+   # 編輯 .env 檔案填入所需的 API 金鑰和設定
+   ```
 
-### Usage
-1. Start the system:
-```bash
-python main.py
-```
+3. **使用 Docker Compose 啟動系統**
+   ```bash
+   docker-compose up -d
+   ```
 
-2. Monitor logs:
-```bash
-tail -f threads_poster.log
-```
+4. **檢視日誌**
+   ```bash
+   docker-compose logs -f
+   ```
 
-3. View performance metrics:
-```bash
-python view_metrics.py
-```
+5. **關閉系統**
+   ```bash
+   docker-compose down
+   ```
 
-4. Use system tools:
-```bash
-# Display all available tools
-python -m src.tools.tools
+### 故障排除
 
-# Check recent posts
-python -m src.tools.tools --check-posts
+1. **GitHub Actions 失敗**
+   - 檢查 Secrets 是否正確設定
+   - 查看詳細錯誤日誌找出問題原因
+   - 確認 MongoDB URI 是否允許從 GitHub Actions IP 存取
 
-# Test time settings
-python -m src.tools.tools --test-time
+2. **MongoDB 連接問題**
+   - 使用 MongoDB Atlas 時，確保網路存取控制已允許所有 IP 地址
+   - 檢查連接字串格式是否正確
+   - 測試 MongoDB 帳戶憑證是否有效
 
-# Execute all tools
-python -m src.tools.tools --all
-```
-
-### Configuration
-System configurations are located in the `config.py` file:
-
-```python
-SYSTEM_CONFIG = {
-    "timezone": "Asia/Taipei",
-    "post_interval": 3600,     # Post interval (seconds)
-    "reply_interval": 300,     # Reply interval (seconds)
-    "max_daily_posts": 40,     # Maximum posts per day
-    "max_daily_replies": 50,   # Maximum replies per day
-    "memory_enabled": True,    # Character memory system switch
-    "performance_monitoring": True, # Performance monitoring switch
-    "cache_ttl": 300,          # Cache TTL (seconds)
-    "connection_pool_size": 50 # Database connection pool size
-}
-```
-
-### Performance Optimization
-- Memory cache to reduce database queries
-- Connection pool for database connection management
-- Asynchronous processing for better response time
-- Smart batch processing to reduce API calls
-- Automatic cleanup of expired data
-- Character memory system optimization
-- Database index optimization
-- API request rate limiting
-- Dynamic connection pool size adjustment
-- Memory usage monitoring and optimization
-- Operation timing and performance analysis
-- Content pre-generation mechanism
-- API request performance tracking
-
-### Performance Monitoring
-- Operation time tracking and analysis
-- API request quantity and time statistics
-- Database operation statistics and analysis
-- Memory usage monitoring
-- Cache hit rate tracking
-- System bottleneck identification
-- Performance metrics storage and trend analysis
-- Operation time anomaly detection
-- Resource usage report generation
-
-### Error Handling
-- Complete error logging
-- Automatic retry mechanism
-- Graceful system shutdown
-- Automatic database connection recovery
-- API call error handling
-- Character memory access exception handling
-- System status auto-recovery
-- Anomaly monitoring and notification
-- Resource usage exception handling
-- Performance anomaly alerts
-
-### Security
-- API key secure management
-- Database access control
-- HTTPS secure connection
-- Data encryption storage
-- Regular security scanning
-- Access permission management
-- Data backup mechanism
-- System monitoring alerts
-- Performance metrics secure storage
-- Sensitive information protection
-
-### Development Info
-- Language: Python
-- Code Style: PEP 8
-- Testing: pytest
-- Version Control: Git
-
-### Update Log
-#### v1.1.7 (2024.03.31)
-- Integrated system tool scripts into a unified directory
-- Created a unified command-line tool interface
-- Improved time settings test tool
-- Moved post checking functionality to core code
-- Optimized post viewing functions in db_handler and utils
-- Fixed .env file parsing issues
-- Enhanced configuration file reading mechanism
-- Optimized performance monitoring module
-- Fixed errors when closing performance_monitor
-- Adjusted README.md format and content
-- Updated system architecture documentation
-
-#### v1.1.6 (2024.03.31)
-- Optimized content generation for better coherence and completeness
-- Enhanced character personality features
-- Improved emoji usage for more natural text
-- Fixed Threads API integration with correct two-step posting process
-- Enhanced post-processing mechanisms for interactivity and readability
-- Improved database storage processes
-- Updated version information for all files
-- Fixed issues with posts truncation
-- Enhanced error handling and logging
-- Added performance monitoring module to track system performance and resource usage
-- Optimized memory usage and database connection pool settings
-- Implemented content caching mechanism for faster response
-- Added operation time tracking functionality
-- Integrated API request statistics and monitoring
-- Added database operation statistics functionality
-
-#### v1.1.5 (2024.03.30)
-- Optimized file structure
-- Integrated redundant modules
-- Updated system architecture
-- Enhanced error handling
-- Improved memory system access
-- Strengthened system stability
-- Optimized logging path
-- Improved config file validation
-- Enhanced database operation performance
-- Improved data backup mechanism
-
-## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-The MIT License allows you to freely use, modify, and distribute this project for both commercial and non-commercial purposes, as long as you retain the original license and copyright notice.
-
-## ライセンス
-このプロジェクトはMITライセンスの下で提供されています。詳細は[LICENSE](LICENSE)ファイルをご覧ください。
-
-MITライセンスでは、元のライセンスと著作権表示を保持する限り、商用・非商用を問わず、このプロジェクトを自由に使用、変更、配布することができます。
-
-## Author
-Chiang, Chenwei
+3. **OpenAI API 錯誤**
+   - 檢查 API 金鑰是否有效
+   - 確認 API 使用額度是否充足
+   - 查看 OpenAI 服務狀態
