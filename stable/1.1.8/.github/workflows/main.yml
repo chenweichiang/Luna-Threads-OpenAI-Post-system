@@ -1,0 +1,280 @@
+name: ThreadsPoster 自動化工作流程
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'  # 每30分鐘執行一次
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  workflow_dispatch:  # 允許手動觸發
+
+env:
+  PYTHON_VERSION: "3.11"
+  TIMEZONE: "Asia/Taipei"
+  LOG_LEVEL: "INFO"
+  MAX_POSTS_PER_DAY: "40"
+  MAX_MEMORY_USAGE: "80"  # 最大記憶體使用百分比
+  EXECUTION_TIMEOUT: "1200"  # 執行超時時間（秒）
+
+jobs:
+  deploy-and-run:
+    name: 部署與運行 ThreadsPoster
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: 檢出代碼
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1  # 減少 Git 歷史以加快檢出
+
+      - name: 設定 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: 安裝依賴
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: 建立日誌目錄
+        run: mkdir -p logs
+
+      - name: 建立環境變數檔案
+        run: |
+          cat << EOF > .env
+          # OpenAI API 設定
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL=gpt-4-0125-preview
+
+          # Threads API 設定
+          THREADS_APP_ID=${{ secrets.THREADS_APP_ID }}
+          THREADS_APP_SECRET=${{ secrets.THREADS_APP_SECRET }}
+          THREADS_ACCESS_TOKEN=${{ secrets.THREADS_ACCESS_TOKEN }}
+          THREADS_USER_ID=${{ secrets.THREADS_USER_ID }}
+
+          # MongoDB 設定
+          MONGODB_URI=${{ secrets.MONGODB_URI }}
+          MONGODB_DB=threadsposter
+          MONGODB_COLLECTION=posts
+
+          # 系統設定
+          TIMEZONE=${{ env.TIMEZONE }}
+          LOG_LEVEL=${{ env.LOG_LEVEL }}
+          DEBUG=False
+          MAX_POSTS_PER_DAY=${{ env.MAX_POSTS_PER_DAY }}
+          EOF
+
+      - name: 創建檢查環境腳本
+        run: |
+          cat << 'EOF' > src/check_env.py
+          """檢查環境變數是否存在並有效"""
+          import os
+          import sys
+          from dotenv import load_dotenv
+
+          # 載入環境變數
+          load_dotenv()
+
+          required_vars = [
+              "OPENAI_API_KEY",
+              "THREADS_ACCESS_TOKEN",
+              "THREADS_USER_ID",
+              "MONGODB_URI"
+          ]
+
+          missing_vars = []
+          for var in required_vars:
+              if not os.getenv(var):
+                  missing_vars.append(var)
+
+          if missing_vars:
+              print(f"錯誤：缺少以下必要的環境變數: {', '.join(missing_vars)}")
+              sys.exit(1)
+          else:
+              print("環境變數檢查通過")
+              sys.exit(0)
+          EOF
+
+      - name: 創建初始化資料庫腳本
+        run: |
+          cat << 'EOF' > src/init_db.py
+          """初始化資料庫連接和集合"""
+          import asyncio
+          import os
+          from dotenv import load_dotenv
+          from motor.motor_asyncio import AsyncIOMotorClient
+          
+          load_dotenv()
+          
+          async def init_db():
+              # 獲取環境變數
+              mongo_uri = os.getenv("MONGODB_URI")
+              db_name = os.getenv("MONGODB_DB", "threadsposter")
+              collection_name = os.getenv("MONGODB_COLLECTION", "posts")
+              
+              if not mongo_uri:
+                  print("錯誤：未設定 MONGODB_URI 環境變數")
+                  return False
+                  
+              try:
+                  # 連接 MongoDB
+                  client = AsyncIOMotorClient(mongo_uri)
+                  db = client[db_name]
+                  
+                  # 檢查連接
+                  await client.admin.command('ping')
+                  
+                  # 確保集合存在
+                  if collection_name not in await db.list_collection_names():
+                      await db.create_collection(collection_name)
+                      
+                  # 建立索引
+                  await db[collection_name].create_index("post_id", unique=True)
+                  await db[collection_name].create_index("created_at")
+                  
+                  print(f"成功連接到資料庫 {db_name} 並建立/確認集合 {collection_name}")
+                  return True
+              except Exception as e:
+                  print(f"資料庫初始化錯誤：{str(e)}")
+                  return False
+              finally:
+                  # 關閉連接
+                  if 'client' in locals():
+                      client.close()
+          
+          if __name__ == "__main__":
+              result = asyncio.run(init_db())
+              if not result:
+                  exit(1)
+          EOF
+
+      - name: 建立檢查記憶體腳本
+        run: |
+          cat << 'EOF' > src/check_memory.py
+          """檢查系統記憶體使用情況"""
+          import os
+          import psutil
+          
+          def check_memory_usage():
+              # 獲取最大允許的記憶體使用率
+              max_usage = float(os.getenv("MAX_MEMORY_USAGE", "80"))
+              
+              # 獲取當前記憶體使用情況
+              memory = psutil.virtual_memory()
+              current_usage = memory.percent
+              
+              print(f"當前記憶體使用率: {current_usage:.1f}% (最大允許: {max_usage:.1f}%)")
+              
+              # 如果超過最大值，退出
+              if current_usage > max_usage:
+                  print("警告: 記憶體使用率過高!")
+                  return False
+              
+              return True
+          
+          if __name__ == "__main__":
+              if not check_memory_usage():
+                  exit(1)
+          EOF
+          
+          # 安裝 psutil 以供檢查記憶體腳本使用
+          pip install psutil
+
+      - name: 檢查環境變數
+        run: python src/check_env.py
+
+      - name: 初始化資料庫
+        run: python src/init_db.py
+
+      - name: 檢查記憶體使用量
+        run: python src/check_memory.py
+
+      - name: 運行程式
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          PYTHONUNBUFFERED: 1
+        run: |
+          # 創建運行腳本
+          cat > run_with_timeout.sh << 'EOL'
+          #!/bin/bash
+          
+          # 設定超時時間 (從環境變數獲取，預設20分鐘)
+          TIMEOUT=${EXECUTION_TIMEOUT:-1200}
+          
+          # 啟動主程式
+          python -m src.main &
+          PID=$!
+          
+          # 檢查程式是否在指定時間內完成
+          for ((i=1; i<=$TIMEOUT; i++)); do
+            # 檢查程式是否還在運行
+            if ! ps -p $PID > /dev/null; then
+              echo "程式已完成執行"
+              exit 0
+            fi
+            
+            # 每30秒檢查一次日誌
+            if [ $((i % 30)) -eq 0 ]; then
+              echo "已運行 $i 秒..."
+              
+              # 檢查是否有錯誤或是否已發文完成
+              if [ -f "logs/threads_poster.log" ]; then
+                if grep -q "發文成功" logs/threads_poster.log; then
+                  echo "檢測到發文成功，結束程式"
+                  kill -15 $PID
+                  sleep 5
+                  kill -9 $PID 2>/dev/null || true
+                  exit 0
+                fi
+                
+                if grep -q "ERROR\|CRITICAL" logs/threads_poster.log; then
+                  echo "檢測到錯誤日誌："
+                  grep -A 5 "ERROR\|CRITICAL" logs/threads_poster.log | tail -n 10
+                fi
+              fi
+            fi
+            
+            sleep 1
+          done
+          
+          # 如果超時則終止程式
+          echo "程式執行超過 $TIMEOUT 秒，強制終止"
+          kill -15 $PID
+          sleep 5
+          kill -9 $PID 2>/dev/null || true
+          exit 1
+          EOL
+          
+          # 設定執行權限
+          chmod +x run_with_timeout.sh
+          
+          # 執行腳本
+          ./run_with_timeout.sh
+
+      - name: 檢查日誌
+        if: always()
+        run: |
+          if [ -d "logs" ] && [ -f "logs/threads_poster.log" ]; then
+            echo "=== 日誌內容 (最後200行) ==="
+            tail -n 200 logs/threads_poster.log
+            
+            # 提取發文結果
+            echo "=== 發文結果 ==="
+            grep "發文成功" logs/threads_poster.log || echo "未找到成功發文記錄"
+          else
+            echo "找不到日誌文件"
+          fi
+
+      - name: 上傳日誌作為構件
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: threads-poster-logs
+          path: logs/*.log
+          retention-days: 7 
