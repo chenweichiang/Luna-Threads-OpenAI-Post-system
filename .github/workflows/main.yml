@@ -31,8 +31,14 @@ jobs:
         with:
           fetch-depth: 1  # 減少 Git 歷史以加快檢出
 
-      - name: 設定 Docker Compose
+      - name: 設定 Docker 環境
         uses: docker/setup-buildx-action@v3
+
+      - name: 安裝 Docker Compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker-compose-plugin
+          docker compose version
 
       - name: 建立日誌目錄
         run: mkdir -p logs
@@ -51,8 +57,8 @@ jobs:
           THREADS_USER_ID=${{ secrets.THREADS_USER_ID }}
 
           # MongoDB 設定
-          MONGODB_URI=mongodb://mongodb:27017/threads_db
-          MONGODB_DB_NAME=threads_db
+          MONGODB_URI=${{ secrets.MONGODB_URI }}
+          MONGODB_DB_NAME=threadsposter
           MONGODB_COLLECTION=posts
 
           # 系統設定
@@ -187,8 +193,8 @@ jobs:
           # 設定超時時間 (從環境變數獲取，預設20分鐘)
           TIMEOUT=${EXECUTION_TIMEOUT:-1200}
           
-          # 啟動 Docker Compose
-          docker-compose up -d
+          # 啟動 Docker Compose (使用新版命令格式)
+          docker compose up -d
           
           # 檢查容器是否在運行
           if [ $(docker ps -q -f name=threads_poster) ]; then
@@ -207,7 +213,7 @@ jobs:
                 if [ -f "logs/threads_poster.log" ]; then
                   if grep -q "發文成功" logs/threads_poster.log; then
                     echo "檢測到發文成功，結束程式"
-                    docker-compose down
+                    docker compose down
                     exit 0
                   fi
                   
@@ -223,11 +229,11 @@ jobs:
             
             # 如果超時則終止容器
             echo "程式執行超過 $TIMEOUT 秒，強制終止"
-            docker-compose down
+            docker compose down
             exit 1
           else
             echo "容器啟動失敗"
-            docker-compose logs
+            docker compose logs
             exit 1
           fi
           EOL
