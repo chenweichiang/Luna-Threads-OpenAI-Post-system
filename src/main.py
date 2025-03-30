@@ -111,7 +111,7 @@ async def startup():
     
     # 初始化時間控制器
     logger.info("初始化時間控制器...")
-    time_controller = TimeController()
+    time_controller = TimeController(config)
     
     # 初始化監控器
     logger.info("初始化監控器...")
@@ -182,11 +182,11 @@ async def shutdown(sig, monitor, db_handler, session):
         await session.close()
         
         # 儲存性能指標
-        logger.info("儲存性能指標...")
         try:
-            performance_monitor.save_metrics()
+            # 使用新的方法關閉性能監控器
+            performance_monitor.shutdown()
         except Exception as e:
-            logger.error(f"儲存性能指標失敗：{str(e)}")
+            logger.error(f"關閉性能監控器失敗：{str(e)}")
         
         # 取得事件循環
         loop = asyncio.get_running_loop()

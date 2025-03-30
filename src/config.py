@@ -33,6 +33,13 @@ class Config:
         # 載入環境變數
         load_dotenv()
         
+        # 輔助函數：清理環境變數值中的註釋
+        def clean_env(env_name, default_value):
+            value = os.getenv(env_name, default_value)
+            if isinstance(value, str) and '#' in value:
+                value = value.split('#')[0].strip()
+            return value
+        
         # 基本設定
         self.TIMEZONE = pytz.timezone("Asia/Taipei")  # 直接使用固定時區
         self.LOG_LEVEL = kwargs.get("LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO"))
@@ -49,61 +56,71 @@ class Config:
         self.LOG_PATH = os.path.join(os.getcwd(), log_path)
         
         # 發文時間設定
-        self.PRIME_POST_START = int(kwargs.get("PRIME_POST_START", os.getenv("PRIME_POST_START", "20")))  # 晚上8點
-        self.PRIME_POST_END = int(kwargs.get("PRIME_POST_END", os.getenv("PRIME_POST_END", "2")))      # 凌晨2點
-        self.MIN_POSTS_PER_DAY = int(kwargs.get("MIN_POSTS_PER_DAY", os.getenv("MIN_POSTS_PER_DAY", "5")))  # 每日最少5篇
-        self.MAX_POSTS_PER_DAY = int(kwargs.get("MAX_POSTS_PER_DAY", os.getenv("MAX_POSTS_PER_DAY", "999")))  # 每日最多999篇
-        self.PRIME_TIME_POST_RATIO = float(kwargs.get("PRIME_TIME_POST_RATIO", os.getenv("PRIME_TIME_POST_RATIO", "0.7")))  # 黃金時段發文比例
+        self.PRIME_POST_START = int(kwargs.get("PRIME_POST_START", clean_env("PRIME_POST_START", "20")))  # 晚上8點
+        self.PRIME_POST_END = int(kwargs.get("PRIME_POST_END", clean_env("PRIME_POST_END", "2")))      # 凌晨2點
+        self.MIN_POSTS_PER_DAY = int(kwargs.get("MIN_POSTS_PER_DAY", clean_env("MIN_POSTS_PER_DAY", "5")))  # 每日最少5篇
+        self.MAX_POSTS_PER_DAY = int(kwargs.get("MAX_POSTS_PER_DAY", clean_env("MAX_POSTS_PER_DAY", "40")))  # 每日最多40篇
+        self.PRIME_TIME_POST_RATIO = float(kwargs.get("PRIME_TIME_POST_RATIO", clean_env("PRIME_TIME_POST_RATIO", "0.7")))  # 黃金時段發文比例
+
+        # 情緒/心情模式時間段設定
+        self.MOOD_MORNING_START = int(kwargs.get("MOOD_MORNING_START", clean_env("MOOD_MORNING_START", "5")))
+        self.MOOD_MORNING_END = int(kwargs.get("MOOD_MORNING_END", clean_env("MOOD_MORNING_END", "11")))
+        self.MOOD_NOON_START = int(kwargs.get("MOOD_NOON_START", clean_env("MOOD_NOON_START", "11")))
+        self.MOOD_NOON_END = int(kwargs.get("MOOD_NOON_END", clean_env("MOOD_NOON_END", "14")))
+        self.MOOD_AFTERNOON_START = int(kwargs.get("MOOD_AFTERNOON_START", clean_env("MOOD_AFTERNOON_START", "14")))
+        self.MOOD_AFTERNOON_END = int(kwargs.get("MOOD_AFTERNOON_END", clean_env("MOOD_AFTERNOON_END", "18")))
+        self.MOOD_EVENING_START = int(kwargs.get("MOOD_EVENING_START", clean_env("MOOD_EVENING_START", "18")))
+        self.MOOD_EVENING_END = int(kwargs.get("MOOD_EVENING_END", clean_env("MOOD_EVENING_END", "22")))
 
         # API 設定
-        self.API_BASE_URL = kwargs.get("API_BASE_URL", os.getenv("THREADS_API_BASE_URL", "https://graph.threads.net/v1.0"))
-        self.THREADS_ACCESS_TOKEN = kwargs.get("THREADS_ACCESS_TOKEN", os.getenv("THREADS_ACCESS_TOKEN", "your_access_token_here"))
-        self.THREADS_APP_ID = kwargs.get("THREADS_APP_ID", os.getenv("THREADS_APP_ID", "your_app_id_here"))
-        self.THREADS_APP_SECRET = kwargs.get("THREADS_APP_SECRET", os.getenv("THREADS_APP_SECRET", "your_app_secret_here"))
-        self.OPENAI_API_KEY = kwargs.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "your_openai_api_key_here"))
-        self.OPENAI_MODEL = kwargs.get("OPENAI_MODEL", os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview"))
-        self.MODEL_NAME = kwargs.get("MODEL_NAME", os.getenv("MODEL_NAME", "gpt-4-turbo-preview"))
+        self.API_BASE_URL = kwargs.get("API_BASE_URL", clean_env("THREADS_API_BASE_URL", "https://graph.threads.net/v1.0"))
+        self.THREADS_ACCESS_TOKEN = kwargs.get("THREADS_ACCESS_TOKEN", clean_env("THREADS_ACCESS_TOKEN", "your_access_token_here"))
+        self.THREADS_APP_ID = kwargs.get("THREADS_APP_ID", clean_env("THREADS_APP_ID", "your_app_id_here"))
+        self.THREADS_APP_SECRET = kwargs.get("THREADS_APP_SECRET", clean_env("THREADS_APP_SECRET", "your_app_secret_here"))
+        self.OPENAI_API_KEY = kwargs.get("OPENAI_API_KEY", clean_env("OPENAI_API_KEY", "your_openai_api_key_here"))
+        self.OPENAI_MODEL = kwargs.get("OPENAI_MODEL", clean_env("OPENAI_MODEL", "gpt-4-turbo-preview"))
+        self.MODEL_NAME = kwargs.get("MODEL_NAME", clean_env("MODEL_NAME", "gpt-4-turbo-preview"))
         
         # Threads API 設定
-        self.THREADS_REDIRECT_URI = kwargs.get("THREADS_REDIRECT_URI", os.getenv("THREADS_REDIRECT_URI"))
-        self.THREADS_SCOPES = kwargs.get("THREADS_SCOPES", os.getenv("THREADS_SCOPES", "")).split(",")
-        self.THREADS_USER_ID = kwargs.get("THREADS_USER_ID", os.getenv("THREADS_USER_ID"))
+        self.THREADS_REDIRECT_URI = kwargs.get("THREADS_REDIRECT_URI", clean_env("THREADS_REDIRECT_URI", ""))
+        self.THREADS_SCOPES = kwargs.get("THREADS_SCOPES", clean_env("THREADS_SCOPES", "")).split(",")
+        self.THREADS_USER_ID = kwargs.get("THREADS_USER_ID", clean_env("THREADS_USER_ID", ""))
 
         # MongoDB 設定
-        self.MONGODB_URI = kwargs.get("MONGODB_URI", os.getenv("MONGODB_URI", "mongodb://localhost:27017"))
-        self.MONGODB_DB_NAME = kwargs.get("MONGODB_DB_NAME", os.getenv("MONGODB_DB_NAME", "threads_poster"))
-        self.MONGODB_COLLECTION = kwargs.get("MONGODB_COLLECTION", os.getenv("MONGODB_COLLECTION", "posts"))
+        self.MONGODB_URI = kwargs.get("MONGODB_URI", clean_env("MONGODB_URI", "mongodb://localhost:27017"))
+        self.MONGODB_DB_NAME = kwargs.get("MONGODB_DB_NAME", clean_env("MONGODB_DB_NAME", "threads_poster"))
+        self.MONGODB_COLLECTION = kwargs.get("MONGODB_COLLECTION", clean_env("MONGODB_COLLECTION", "posts"))
 
         # 系統運行參數
-        self.CHECK_INTERVAL = int(kwargs.get("CHECK_INTERVAL", os.getenv("CHECK_INTERVAL", "60")))  # 檢查新回覆的間隔（秒）
-        self.RETRY_INTERVAL = int(kwargs.get("RETRY_INTERVAL", os.getenv("RETRY_INTERVAL", "300")))  # 重試間隔（秒）
-        self.MAX_RETRIES = int(kwargs.get("MAX_RETRIES", os.getenv("MAX_RETRIES", "3")))  # 最大重試次數
-        self.RETRY_DELAY = int(kwargs.get("RETRY_DELAY", os.getenv("RETRY_DELAY", "5")))  # 重試延遲（秒）
-        self.MAX_RESPONSE_LENGTH = int(kwargs.get("MAX_RESPONSE_LENGTH", os.getenv("MAX_RESPONSE_LENGTH", "500")))  # 回覆最大長度
+        self.CHECK_INTERVAL = int(kwargs.get("CHECK_INTERVAL", clean_env("CHECK_INTERVAL", "60")))  # 檢查新回覆的間隔（秒）
+        self.RETRY_INTERVAL = int(kwargs.get("RETRY_INTERVAL", clean_env("RETRY_INTERVAL", "300")))  # 重試間隔（秒）
+        self.MAX_RETRIES = int(kwargs.get("MAX_RETRIES", clean_env("MAX_RETRIES", "3")))  # 最大重試次數
+        self.RETRY_DELAY = int(kwargs.get("RETRY_DELAY", clean_env("RETRY_DELAY", "5")))  # 重試延遲（秒）
+        self.MAX_RESPONSE_LENGTH = int(kwargs.get("MAX_RESPONSE_LENGTH", clean_env("MAX_RESPONSE_LENGTH", "500")))  # 回覆最大長度
 
         # 記憶系統設定
         self.MEMORY_CONFIG = kwargs.get("MEMORY_CONFIG", {
-            'max_history': int(os.getenv("MEMORY_MAX_HISTORY", "10")),
-            'retention_days': int(os.getenv("MEMORY_RETENTION_DAYS", "7")),
-            'max_records': int(os.getenv("MEMORY_MAX_RECORDS", "50"))
+            'max_history': int(clean_env("MEMORY_MAX_HISTORY", "10")),
+            'retention_days': int(clean_env("MEMORY_RETENTION_DAYS", "7")),
+            'max_records': int(clean_env("MEMORY_MAX_RECORDS", "50"))
         })
 
         # 系統設定
         self.SYSTEM_CONFIG = kwargs.get("SYSTEM_CONFIG", {
-            "timezone": os.getenv("TIMEZONE", "Asia/Taipei"),
+            "timezone": clean_env("TIMEZONE", "Asia/Taipei"),
             "post_interval": {
                 "prime_time": {
-                    "min": 15 * 60,  # 主要時段最小間隔（15分鐘）
-                    "max": 45 * 60   # 主要時段最大間隔（45分鐘）
+                    "min": int(clean_env("PRIME_TIME_MIN_INTERVAL", "900")),  # 主要時段最小間隔（15分鐘）
+                    "max": int(clean_env("PRIME_TIME_MAX_INTERVAL", "2700"))   # 主要時段最大間隔（45分鐘）
                 },
                 "other_time": {
-                    "min": 60 * 60,  # 其他時段最小間隔（1小時）
-                    "max": 180 * 60  # 其他時段最大間隔（3小時）
+                    "min": int(clean_env("OTHER_TIME_MIN_INTERVAL", "3600")),  # 其他時段最小間隔（1小時）
+                    "max": int(clean_env("OTHER_TIME_MAX_INTERVAL", "10800"))  # 其他時段最大間隔（3小時）
                 }
             },
-            "max_daily_posts": 999,    # 每日最大發文數
+            "max_daily_posts": 40,    # 每日最大發文數
             "min_daily_posts": self.MIN_POSTS_PER_DAY,     # 每日最少發文數
-            "log_level": os.getenv("LOG_LEVEL", "DEBUG")
+            "log_level": clean_env("LOG_LEVEL", "DEBUG")
         })
         
         # 角色設定
@@ -236,13 +253,13 @@ class Config:
         Returns:
             Dict: 心情模式設定
         """
-        if 5 <= hour < 11:
+        if self.MOOD_MORNING_START <= hour < self.MOOD_MORNING_END:
             return self.CHARACTER_CONFIG["mood_patterns"]["morning"]
-        elif 11 <= hour < 14:
+        elif self.MOOD_NOON_START <= hour < self.MOOD_NOON_END:
             return self.CHARACTER_CONFIG["mood_patterns"]["noon"]
-        elif 14 <= hour < 18:
+        elif self.MOOD_AFTERNOON_START <= hour < self.MOOD_AFTERNOON_END:
             return self.CHARACTER_CONFIG["mood_patterns"]["afternoon"]
-        elif 18 <= hour < 22:
+        elif self.MOOD_EVENING_START <= hour < self.MOOD_EVENING_END:
             return self.CHARACTER_CONFIG["mood_patterns"]["evening"]
         else:
             return self.CHARACTER_CONFIG["mood_patterns"]["night"]

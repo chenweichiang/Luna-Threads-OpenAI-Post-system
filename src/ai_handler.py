@@ -1,35 +1,85 @@
 """
 Version: 2024.03.31 (v1.1.6)
 Author: ThreadsPoster Team
-Description: AI 處理器類別，負責管理 OpenAI API 的互動以及內容生成
+Description: AI 處理器模組，負責處理 AI 生成和回應
 Last Modified: 2024.03.31
 Changes:
-- 改進 OpenAI API 整合
-- 加強錯誤處理
-- 優化 token 使用
-- 加入情感分析功能
-- 改進人設記憶存取
-- 提高生成內容的連貫性
-- 加強角色特性表現
+- 改進錯誤處理
+- 優化資料庫連接
+- 加強人設記憶維護
+- 支援多種回應風格
+- 動態調整語氣和主題
 """
 
 import logging
-from datetime import datetime
-import pytz
-from openai import AsyncOpenAI
-from src.config import Config
-from src.utils import sanitize_text
 import random
-from typing import Optional, List, Dict, Any, Tuple
 import json
-from collections import defaultdict
-import asyncio
-import time
-import os
 import re
-from cachetools import TTLCache
+import time
 import hashlib
+import os
+import asyncio
+from datetime import datetime
+from typing import Dict, List, Any, Optional, Union
+import pytz
 import aiohttp
+from openai import AsyncOpenAI
+from cachetools import TTLCache
+
+# 導入性能監視器
+try:
+    from src.performance_monitor import performance_monitor, track_performance
+except ImportError:
+    # 如果找不到性能監視器，創建一個簡單的替代函數
+    def track_performance(name):
+        def decorator(func):
+            return func
+        return decorator
+    
+    class DummyPerformanceMonitor:
+        def start_operation(self, name):
+            pass
+            
+        def end_operation(self, name):
+            return 0.0
+    
+    performance_monitor = DummyPerformanceMonitor()
+
+# 輔助函數
+def sanitize_text(text: str, max_length: int = 280) -> str:
+    """清理文本
+    
+    Args:
+        text: 需要清理的文本
+        max_length: 最大允許長度
+        
+    Returns:
+        str: 清理後的文本
+    """
+    if not text:
+        return ""
+        
+    # 移除多餘的空白
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    # 縮短過長的文本
+    if len(text) > max_length:
+        # 尋找適合截斷的位置
+        truncate_pos = text.rfind('.', 0, max_length)
+        if truncate_pos == -1:
+            truncate_pos = text.rfind('!', 0, max_length)
+        if truncate_pos == -1:
+            truncate_pos = text.rfind('?', 0, max_length)
+        if truncate_pos == -1:
+            truncate_pos = max_length
+            
+        text = text[:truncate_pos+1]
+    
+    # 確保以完整句子結尾
+    if not text.endswith(('.', '!', '?', '。', '！', '？')):
+        text = text + '。'
+        
+    return text
 
 # 設定 token 使用量的 logger
 token_logger = logging.getLogger('token_usage')
@@ -85,18 +135,33 @@ class AIError(Exception):
 
 class AIHandler:
     """AI 處理器"""
-    def __init__(self, api_key: str, session: aiohttp.ClientSession, db = None):
+    def __init__(self, api_key: str, session: aiohttp.ClientSession, db_handler):
         """初始化 AI 處理器
         
         Args:
             api_key: OpenAI API 金鑰
-            session: HTTP session
-            db: 可選的資料庫處理器實例
+            session: HTTP 客戶端 session
+            db_handler: 資料庫處理器
         """
         self.api_key = api_key
         self.session = session
-        self.db = db
+        self.db = db_handler
         self.logger = logging.getLogger(__name__)
+        self.model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
+        self.performance_monitor = performance_monitor
+        
+        # 輔助函數：清理環境變數值中的註釋
+        def clean_env(env_name, default_value):
+            value = os.getenv(env_name, default_value)
+            if isinstance(value, str) and '#' in value:
+                value = value.split('#')[0].strip()
+            return value
+        
+        # 讀取深夜模式時間設定
+        self.night_mode_start = int(clean_env("POSTING_HOURS_END", "23"))  # 預設晚上11點
+        self.night_mode_end = int(clean_env("POSTING_HOURS_START", "7"))   # 預設早上7點
+        self.logger.info(f"設定深夜模式時間範圍: {self.night_mode_start}-{self.night_mode_end}")
+        
         self.timezone = pytz.timezone("Asia/Taipei")
         self.openai_client = AsyncOpenAI(api_key=api_key)
         self.total_tokens = total_tokens
@@ -150,38 +215,20 @@ class AIHandler:
             ]
         }
 
+    @track_performance("ai_handler_initialize")
     async def initialize(self):
-        """初始化 AI 處理器的資料庫連接和人設記憶"""
+        """初始化 AI 處理器"""
         try:
-            if not self.db:
-                self.logger.warning("資料庫處理器未設定，部分功能可能受限")
-                return True
-            
-            # 檢查基礎人設是否存在
-            base_memory = await self.db.get_personality_memory('base')
-            if not base_memory:
-                self.logger.info("初始化基礎人設記憶")
-                # 獲取並儲存基礎人設
-                base_personality = await self._get_luna_personality()
-                await self.db.save_personality_memory('base', base_personality)
-            
-            # 初始化各種場景的人設
-            scenes = ['gaming', 'night', 'social']
-            for scene in scenes:
-                scene_memory = await self.db.get_personality_memory(scene)
-                if not scene_memory:
-                    self.logger.info(f"初始化 {scene} 場景的人設記憶")
-                    # 獲取並儲存場景特定人設
-                    scene_personality = await self._get_luna_personality(scene)
-                    await self.db.save_personality_memory(scene, scene_personality)
-            
-            self.logger.info("人設記憶初始化完成")
-            
-            return True
-            
+            # 初始化人設記憶
+            personality = await self.db.get_personality_memory("base")
+            if personality:
+                self.logger.info("人設記憶初始化完成")
+            else:
+                self.logger.warning("無法獲取人設記憶，將創建基本人設")
+                await self.db.create_base_personality()
         except Exception as e:
-            self.logger.error(f"初始化人設記憶時發生錯誤：{str(e)}")
-            return False
+            self.logger.error(f"初始化 AI 處理器失敗：{str(e)}")
+            raise
 
     async def close(self):
         """關閉 AI 處理器"""
@@ -324,7 +371,8 @@ class AIHandler:
                 self.logger.info(f"整合建議主題: {suggested_topics}")
             
             # 獲取當前情境的記憶
-            context = 'night' if (current_hour >= 23 or current_hour < 5) else 'base'
+            is_night = current_hour >= self.night_mode_start or current_hour < self.night_mode_end
+            context = 'night' if is_night else 'base'
             memory = await self._get_luna_personality(context)
             
             # 根據情境構建提示詞
@@ -356,7 +404,7 @@ class AIHandler:
                 try:
                     start_time = time.time()
                     response = await self.openai_client.chat.completions.create(
-                        model=self.config.OPENAI_MODEL,
+                        model=self.model,
                         messages=[
                             {"role": "system", "content": prompt},
                             {"role": "user", "content": topic_prompt}
@@ -419,8 +467,8 @@ class AIHandler:
             current_hour = datetime.now(self.timezone).hour
             self.logger.info(f"當前時間：{current_hour}時")
             
-            # 深夜時段 (23:00-05:00)
-            if current_hour >= 23 or current_hour < 5:
+            # 深夜時段
+            if current_hour >= self.night_mode_start or current_hour < self.night_mode_end:
                 moods = ["想看動漫", "在玩遊戲", "失眠", "思考人生"]
                 styles = ["需要陪伴", "想找人聊天"]
                 topics = ["星空", "音樂", "二次元", "夢想", "心情", "動漫"]
@@ -480,7 +528,7 @@ class AIHandler:
             
         try:
             response = await self.openai_client.chat.completions.create(
-                model=self.config.OPENAI_MODEL,
+                model=self.model,
                 messages=[
                     {"role": "system", "content": "你是一個情感分析專家。請分析文本的情感，並以JSON格式返回正面、中性、負面各佔的百分比。"},
                     {"role": "user", "content": f"請分析這段文字的情感，並以JSON格式返回正面、中性、負面的百分比（三者加總應為100）：{text}"}
@@ -1051,32 +1099,45 @@ class AIHandler:
             self.logger.error(f"生成內容時發生錯誤：{str(e)}")
             return None
 
-    async def analyze_sentiment(self, content: str) -> Dict[str, float]:
+    async def analyze_sentiment(self, text: str) -> Dict[str, float]:
         """分析文本情感
         
         Args:
-            content: 要分析的文本
+            text: 要分析的文本
             
         Returns:
             Dict[str, float]: 情感分析結果
         """
         try:
-            # 檢查快取
-            cache_key = hashlib.md5(content.encode()).hexdigest()
-            if cache_key in self._sentiment_cache:
-                return self._sentiment_cache[cache_key]
-                
-            # 進行情感分析
-            sentiment = await self._analyze_sentiment(content)
+            response = await self.openai_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "你是一個情感分析專家。請分析文本的情感，並以JSON格式返回正面、中性、負面各佔的百分比。"},
+                    {"role": "user", "content": f"請分析以下文本的情感，以JSON格式返回正面、中性、負面情感各佔百分比：\n\n{text}"}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.5,
+                max_tokens=150
+            )
             
-            # 儲存到快取
-            self._sentiment_cache[cache_key] = sentiment
+            content = response.choices[0].message.content
             
-            return sentiment
-            
+            # 解析JSON格式的回應
+            try:
+                sentiment = json.loads(content)
+                # 確保結果為固定格式
+                normalized = {
+                    "positive": sentiment.get("正面", 0) if isinstance(sentiment.get("正面", 0), (int, float)) else 0,
+                    "neutral": sentiment.get("中性", 0) if isinstance(sentiment.get("中性", 0), (int, float)) else 0,
+                    "negative": sentiment.get("負面", 0) if isinstance(sentiment.get("負面", 0), (int, float)) else 0,
+                }
+                return normalized
+            except json.JSONDecodeError:
+                self.logger.error(f"情感分析 JSON 解析失敗: {content}")
+                return {"positive": 33.33, "neutral": 33.33, "negative": 33.33}
         except Exception as e:
-            self.logger.error(f"分析情感時發生錯誤：{str(e)}")
-            return {"positive": 0.0, "neutral": 100.0, "negative": 0.0}
+            self.logger.error(f"情感分析失敗: {str(e)}")
+            return {"positive": 33.33, "neutral": 33.33, "negative": 33.33}
 
     async def _get_luna_personality(self, context: str = None) -> Dict[str, Any]:
         """獲取Luna的人設特徵，根據不同場景返回相應的性格特徵
@@ -1247,3 +1308,252 @@ class AIHandler:
         except Exception as e:
             self.logger.error(f"獲取Luna人設時發生錯誤：{str(e)}")
             return {}
+
+    async def get_recent_night_topics(self) -> List[str]:
+        """獲取最近的夜間話題
+        
+        Returns:
+            List[str]: 話題列表
+        """
+        # 獲取當前時間
+        current_time = datetime.now(self.timezone)
+        current_hour = current_time.hour
+        
+        # 判斷是否為深夜
+        is_night = current_hour >= self.night_mode_start or current_hour < self.night_mode_end
+        
+        if is_night:
+            # 深夜模式，返回適合的話題
+            night_topics = [
+                "今晚的月色真美",
+                "深夜的寂靜",
+                "思緒萬千的夜",
+                "繁星點點",
+                "夜色中的思念"
+            ]
+            return night_topics
+        else:
+            # 非深夜模式，返回空列表
+            return []
+
+    async def get_post_context(self) -> Dict[str, Any]:
+        """獲取發文上下文，包括適合的語氣和主題
+        
+        Returns:
+            Dict[str, Any]: 發文上下文
+        """
+        # 獲取當前時間
+        current_time = datetime.now(self.timezone)
+        current_hour = current_time.hour
+        
+        # 基於時間設定語氣
+        if current_hour >= self.night_mode_start or current_hour < self.night_mode_end:
+            mood = "安靜思考"
+            tone = "溫柔平靜"
+            topic_categories = ["個人感受", "思考", "回憶", "夢想"]
+            emoji_style = "低頻使用，偏向平靜表情"
+        elif 5 <= current_hour < 9:
+            mood = "清新活力"
+            tone = "朝氣蓬勃"
+            topic_categories = ["早安", "計畫", "生活", "健康"]
+            emoji_style = "適中使用，偏向陽光表情"
+        elif 11 <= current_hour < 14:
+            mood = "輕鬆愉快"
+            tone = "親切自然"
+            topic_categories = ["午餐", "休息", "閒談", "興趣"]
+            emoji_style = "適中使用，偏向輕鬆表情"
+        elif 17 <= current_hour < 20:
+            mood = "溫暖放鬆"
+            tone = "友善互動"
+            topic_categories = ["晚餐", "社交", "娛樂", "放鬆"]
+            emoji_style = "較多使用，豐富表情"
+        else:
+            mood = "日常平靜"
+            tone = "自然流暢"
+            topic_categories = ["分享", "討論", "思考", "見聞"]
+            emoji_style = "適中使用，多樣表情"
+        
+        # 返回上下文
+        return {
+            "mood": mood,
+            "tone": tone,
+            "topic_categories": topic_categories,
+            "emoji_style": emoji_style,
+            "time_of_day": "night" if (current_hour >= self.night_mode_start or current_hour < self.night_mode_end) else "day"
+        }
+
+    async def get_topic_by_time(self) -> str:
+        """根據時間獲取話題
+        
+        Returns:
+            str: 適合當前時間的話題
+        """
+        # 獲取當前時間
+        now = datetime.now(self.timezone)
+        current_hour = now.hour
+        
+        # 根據時間選擇適合的話題
+        if current_hour >= self.night_mode_start or current_hour < self.night_mode_end:
+            # 深夜模式
+            topics = ["安靜的夜晚", "夜間思考", "月光下的感受", "深夜的寂靜", "星空下的想法"]
+        elif 5 <= current_hour < 10:
+            # 早上
+            topics = ["早安世界", "今日計畫", "早晨的陽光", "新的一天", "清晨的心情"]
+        elif 10 <= current_hour < 14:
+            # 中午
+            topics = ["午餐時間", "中午的休息", "今日話題", "學習心得", "生活小確幸"]
+        elif 14 <= current_hour < 18:
+            # 下午
+            topics = ["下午茶", "工作學習", "今日收穫", "小發現", "充實的時光"]
+        else:
+            # 晚上
+            topics = ["晚餐時光", "一天的結束", "晚上的安排", "放鬆時刻", "有趣的事情"]
+            
+        return random.choice(topics)
+
+    async def _generate_time_specific_topic(self, memory_data: Dict[str, Any]) -> str:
+        """根據時間生成特定話題
+        
+        Args:
+            memory_data: 記憶資料
+            
+        Returns:
+            str: 生成的話題
+        """
+        # 獲取當前時間
+        current_time = datetime.now(self.timezone)
+        current_hour = current_time.hour
+        
+        # 判斷是否為深夜
+        is_night = current_hour >= self.night_mode_start or current_hour < self.night_mode_end
+        
+        # 獲取記憶的熱門話題
+        recent_topics = memory_data.get("recent_topics", [])
+        interests = memory_data.get("interests", [])
+        
+        # 根據時間挑選適合的話題
+        if is_night:
+            # 深夜模式
+            night_topics = [
+                "夜深人靜的時候，總是會想起...",
+                "午夜的城市，安靜又美麗...",
+                "夜晚的星空總是讓我感到...",
+                "失眠的夜晚，思緒萬千...",
+                "月光灑落窗台，像是在訴說..."
+            ]
+            return random.choice(night_topics)
+        else:
+            # 日間模式
+            if recent_topics:
+                return f"今天想聊聊關於{random.choice(recent_topics)}的話題..."
+            elif interests:
+                return f"最近對{random.choice(interests)}很感興趣呢..."
+            else:
+                day_topics = [
+                    "今天的天氣真是...",
+                    "剛剛看到一則有趣的消息...",
+                    "突然想到一個有趣的點子...",
+                    "今天遇到了一些有趣的事情...",
+                    "最近發現了一個很棒的..."
+                ]
+                return random.choice(day_topics)
+                
+    async def get_luna_thought(self, context: Dict[str, Any]) -> str:
+        """獲取Luna的思考內容
+        
+        Args:
+            context: 上下文
+            
+        Returns:
+            str: 思考內容
+        """
+        # 獲取當前時間
+        current_time = datetime.now(self.timezone)
+        current_hour = current_time.hour
+        
+        # 判斷是否為夜間模式
+        is_night = current_hour >= self.night_mode_start or current_hour < self.night_mode_end
+        
+        if is_night:
+            # 夜間思考模式
+            night_thoughts = [
+                f"夜深了，{context['mood']}的感覺，{context['style']}地想著{random.choice(context['topics'])}",
+                f"午夜時分，{context['mood']}地感受著{random.choice(context['topics'])}",
+                f"星空下，{context['style']}地思考著關於{random.choice(context['topics'])}的事",
+                f"靜謐的夜晚，{context['mood']}地回憶著{random.choice(context['topics'])}"
+            ]
+            return random.choice(night_thoughts)
+        else:
+            # 日間思考模式
+            day_thoughts = [
+                f"今天感到{context['mood']}，想到了關於{random.choice(context['topics'])}的事",
+                f"{context['style']}地思考著{random.choice(context['topics'])}",
+                f"突然對{random.choice(context['topics'])}產生了興趣，感覺{context['mood']}",
+                f"今天{context['mood']}地發現了關於{random.choice(context['topics'])}的新想法"
+            ]
+            return random.choice(day_thoughts)
+            
+    async def _generate_memory_prompt(self, user_input: str) -> str:
+        """生成記憶提示
+        
+        Args:
+            user_input: 用戶輸入
+            
+        Returns:
+            str: 記憶提示
+        """
+        # 獲取當前時間
+        current_time = datetime.now(self.timezone)
+        current_hour = current_time.hour
+        
+        # 設置記憶上下文
+        is_night = current_hour >= self.night_mode_start or current_hour < self.night_mode_end
+        memory_context = 'night' if is_night else 'base'
+        
+        # 獲取記憶
+        memory = await self.db.get_personality_memory(memory_context)
+        if not memory:
+            memory = await self.db.get_personality_memory('base')
+            
+        # 當前用戶的記憶
+        user_memory = await self.db.get_user_memory(user_input)
+        
+        # 生成提示
+        if memory_context == 'night':
+            night_mode = memory.get('夜間模式', {})
+            if not night_mode:
+                night_mode = memory.get('基本特徵', {})
+                
+            night_activities = night_mode.get('活動', [])
+            night_phrases = night_mode.get('常用語', [])
+            night_emojis = night_mode.get('表情', ['🌙', '💭', '🥺'])
+            
+            if not night_phrases:
+                return f"夜深了，{memory['基本特徵']['性格']}的感覺，{memory['基本特徵']['特點']}地回應用戶 {random.choice(night_emojis)}"
+                
+            content = random.choice(night_phrases)
+            if night_activities and random.random() < 0.3:  # 30% 機率加入活動描述
+                activity = random.choice(night_activities)
+                content = f"{content} 現在正在{activity}。"
+                
+            content += f" {random.choice(night_emojis)}"
+            return content
+        else:
+            # 日間模式
+            if user_memory:
+                # 有用戶記憶，根據記憶生成個性化回應
+                interests = user_memory.get('興趣', [])
+                interaction_style = user_memory.get('互動風格', '友好')
+                user_name = user_memory.get('名稱', '朋友')
+                
+                if interests:
+                    return f"嗨 {user_name}！記得你對{random.choice(interests)}很有興趣呢。讓我以{interaction_style}的方式回應你吧～"
+                else:
+                    return f"嗨 {user_name}！很高興再次跟你聊天。我會用{interaction_style}的方式回應你的～"
+            else:
+                # 無用戶記憶，使用通用回應
+                basic_traits = memory.get('基本特徵', {})
+                personality = basic_traits.get('性格', '友善')
+                style = basic_traits.get('特點', '活潑')
+                
+                return f"以{personality}的性格，{style}地回應新用戶的提問。使用自然且親切的語氣，適當加入表情符號增加親近感。"

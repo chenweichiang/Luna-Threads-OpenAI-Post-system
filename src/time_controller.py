@@ -23,26 +23,52 @@ import asyncio
 class TimeController:
     """時間控制器類別"""
     
-    def __init__(self):
-        """初始化時間控制器"""
-        self.timezone = pytz.timezone(os.getenv("TIMEZONE", "Asia/Taipei"))
+    def __init__(self, config=None):
+        """初始化時間控制器
+        
+        Args:
+            config: 配置對象，包含發文間隔設定
+        """
+        # 輔助函數：清理環境變數值中的註釋
+        def clean_env(env_name, default_value):
+            value = os.getenv(env_name, default_value)
+            if isinstance(value, str) and '#' in value:
+                value = value.split('#')[0].strip()
+            return value
+            
+        self.timezone = pytz.timezone(clean_env("TIMEZONE", "Asia/Taipei"))
         self.next_post_time = None
         self.logger = logging.getLogger(__name__)
         
         # 設定發文間隔
-        self.post_interval = {
-            "prime_time": {
-                "min": int(os.getenv("PRIME_TIME_MIN_INTERVAL", "1800")),  # 30分鐘
-                "max": int(os.getenv("PRIME_TIME_MAX_INTERVAL", "3600"))   # 1小時
-            },
-            "other_time": {
-                "min": int(os.getenv("OTHER_TIME_MIN_INTERVAL", "3600")),  # 1小時
-                "max": int(os.getenv("OTHER_TIME_MAX_INTERVAL", "7200"))   # 2小時
+        if config and hasattr(config, 'SYSTEM_CONFIG') and 'post_interval' in config.SYSTEM_CONFIG:
+            self.post_interval = config.SYSTEM_CONFIG['post_interval']
+            self.logger.info(f"從配置讀取發文間隔設定: {self.post_interval}")
+        else:
+            # 使用預設值或環境變數
+            self.post_interval = {
+                "prime_time": {
+                    "min": int(clean_env("PRIME_TIME_MIN_INTERVAL", "900")),  # 15分鐘
+                    "max": int(clean_env("PRIME_TIME_MAX_INTERVAL", "2700"))   # 45分鐘
+                },
+                "other_time": {
+                    "min": int(clean_env("OTHER_TIME_MIN_INTERVAL", "3600")),  # 1小時
+                    "max": int(clean_env("OTHER_TIME_MAX_INTERVAL", "10800"))   # 3小時
+                }
             }
-        }
         
-        # 設定允許發文的時間範圍
-        self.allowed_hours = range(7, 23)  # 早上7點到晚上11點
+        # 設定允許發文的時間範圍，從環境變數讀取
+        posting_hours_start = int(clean_env("POSTING_HOURS_START", "7"))  # 預設早上7點
+        posting_hours_end = int(clean_env("POSTING_HOURS_END", "23"))    # 預設晚上11點
+        self.allowed_hours = range(posting_hours_start, posting_hours_end)
+        self.logger.info(f"設定允許發文時間範圍: {posting_hours_start}-{posting_hours_end}")
+        
+        # 設定黃金時段的時間範圍，從環境變數讀取
+        self.prime_time_afternoon_start = int(clean_env("PRIME_TIME_AFTERNOON_START", "11"))
+        self.prime_time_afternoon_end = int(clean_env("PRIME_TIME_AFTERNOON_END", "14"))
+        self.prime_time_evening_start = int(clean_env("PRIME_TIME_EVENING_START", "17"))
+        self.prime_time_evening_end = int(clean_env("PRIME_TIME_EVENING_END", "22"))
+        self.logger.info(f"設定黃金時段時間範圍: 午間({self.prime_time_afternoon_start}-{self.prime_time_afternoon_end}), 晚間({self.prime_time_evening_start}-{self.prime_time_evening_end})")
         
     def should_post(self) -> bool:
         """檢查是否應該發文
@@ -67,10 +93,11 @@ class TimeController:
         # 檢查是否在允許的時間範圍內
         hour = current_time.hour
         if hour not in self.allowed_hours:
-            self.logger.info("當前時間不在允許發文範圍，當前時間：%d時，允許時間：7-23時", hour)
-            # 設定下次發文時間為明天早上7點
+            self.logger.info("當前時間不在允許發文範圍，當前時間：%d時，允許時間：%d-%d時", 
+                hour, self.allowed_hours.start, self.allowed_hours.stop-1)
+            # 設定下次發文時間為明天早上的允許發文開始時間
             tomorrow = current_time + timedelta(days=1)
-            self.next_post_time = tomorrow.replace(hour=7, minute=0, second=0, microsecond=0)
+            self.next_post_time = tomorrow.replace(hour=self.allowed_hours.start, minute=0, second=0, microsecond=0)
             return False
         
         return True
@@ -98,7 +125,9 @@ class TimeController:
             dt = datetime.now(self.timezone)
             
         hour = dt.hour
-        return (11 <= hour <= 14) or (17 <= hour <= 22)
+        # 從環境變數讀取的黃金時段設定
+        return (self.prime_time_afternoon_start <= hour <= self.prime_time_afternoon_end) or \
+               (self.prime_time_evening_start <= hour <= self.prime_time_evening_end)
         
     def get_interval(self) -> int:
         """獲取下一次發文間隔
@@ -120,10 +149,10 @@ class TimeController:
             interval = self.get_interval()
             self.next_post_time = datetime.now(self.timezone) + timedelta(seconds=interval)
             
-            # 如果下次發文時間超出允許範圍，調整到明天早上7點
+            # 如果下次發文時間超出允許範圍，調整到明天早上的允許發文開始時間
             if self.next_post_time.hour not in self.allowed_hours:
                 tomorrow = self.next_post_time + timedelta(days=1)
-                self.next_post_time = tomorrow.replace(hour=7, minute=0, second=0, microsecond=0)
+                self.next_post_time = tomorrow.replace(hour=self.allowed_hours.start, minute=0, second=0, microsecond=0)
                 interval = (self.next_post_time - datetime.now(self.timezone)).total_seconds()
             
             self.logger.info("更新發文時間，下次發文時間：%s，間隔：%d 秒",

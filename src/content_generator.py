@@ -137,13 +137,29 @@ class ContentGenerator:
             return None
     
     async def _generate_content(self) -> Optional[str]:
-        """實際生成內容的方法"""
+        """生成內容的核心函數
+        
+        Returns:
+            Optional[str]: 生成的內容，如果失敗則返回 None
+        """
         try:
             # 隨機選擇主題和提示詞
-            topic = random.choice(self.topics)
-            prompt = random.choice(self.prompts)
+            topic = random.choice(["日常生活", "健康運動", "美食探索", "科技新知", "遊戲體驗", "音樂藝術", "旅行見聞", "心情分享"])
             
-            # 檢查是否有快取的內容
+            # 根據主題生成提示詞
+            prompt_templates = {
+                "日常生活": ["今天發生了一件...", "最近有個有趣的...", "突然想起一個...", "一直想嘗試...", "分享一個小習慣..."],
+                "健康運動": ["想跟大家聊聊關於...", "最近開始嘗試...", "關於健康生活...", "找到一種有趣的..."],
+                "美食探索": ["分享一個讓我印象深刻的...", "最近發現了一家...", "試著做了一道...", "對這種食物很好奇..."],
+                "科技新知": ["今天學到了一個新的...", "最近這個科技趨勢...", "發現一個很有用的...", "思考關於科技發展..."],
+                "遊戲體驗": ["最近玩了一款...", "對這個遊戲的想法...", "遊戲中遇到很酷的...", "分享一個遊戲小技巧..."],
+                "音樂藝術": ["最近發現了一個很棒的...", "這首歌讓我感到...", "分享一個創作靈感...", "對這種藝術風格..."],
+                "旅行見聞": ["記得那次去...", "想去一個地方...", "旅行中學到的...", "印象最深刻的風景..."],
+                "心情分享": ["今天的心情很...", "最近感覺...", "一直在思考...", "想分享一個感受..."]
+            }
+            prompt = random.choice(prompt_templates[topic])
+            
+            # 檢查快取中是否有內容
             cache_key = f"{topic}:{prompt}"
             if cache_key in self.content_cache:
                 content = self.content_cache[cache_key]
@@ -154,11 +170,20 @@ class ContentGenerator:
             current_time = datetime.now(self.timezone)
             hour = current_time.hour
             
+            # 輔助函數：清理環境變數值中的註釋
+            def clean_env(env_name, default_value):
+                value = os.getenv(env_name, default_value)
+                if isinstance(value, str) and '#' in value:
+                    value = value.split('#')[0].strip()
+                return value
+            
+            # 從環境變數讀取深夜模式時間設定
+            night_start = int(clean_env("POSTING_HOURS_END", "23"))  # 預設晚上11點開始
+            night_end = int(clean_env("POSTING_HOURS_START", "7"))   # 預設早上7點結束
+            
             # 選擇場景
-            if 1 <= hour <= 5:
+            if hour >= night_start or hour < night_end:
                 context = 'night'  # 深夜模式
-            elif 22 <= hour <= 24:
-                context = 'night'  # 晚上模式
             else:
                 context = random.choice(['base', 'social', 'gaming'])  # 日間隨機模式
                 

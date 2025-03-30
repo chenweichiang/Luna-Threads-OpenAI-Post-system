@@ -238,3 +238,19 @@ class DatabaseHandler:
         except Exception as e:
             self.logger.error(f"獲取人設記憶時發生錯誤：{str(e)}")
             return {} 
+
+    async def get_latest_posts(self, limit=3):
+        """獲取最近的文章
+
+        Args:
+            limit: 要獲取的文章數量
+
+        Returns:
+            List: 文章列表
+        """
+        try:
+            posts = await self.database.db.posts.find().sort('timestamp', -1).limit(limit).to_list(length=limit)
+            return posts
+        except Exception as e:
+            self.logger.error(f"獲取最近文章時發生錯誤: {str(e)}")
+            return [] 

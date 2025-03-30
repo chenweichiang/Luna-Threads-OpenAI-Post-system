@@ -160,3 +160,23 @@ def get_suggested_topics():
     elif 19 <= current_hour < 23:
         return schedule['evening']['topics']
     return []
+
+async def check_latest_posts(db_handler, limit=3, print_result=True):
+    """檢查最近的文章
+
+    Args:
+        db_handler: 資料庫處理器
+        limit: 要檢查的文章數量
+        print_result: 是否列印結果
+
+    Returns:
+        List: 文章列表
+    """
+    posts = await db_handler.get_latest_posts(limit)
+    
+    if print_result:
+        print(f"找到 {len(posts)} 篇文章")
+        for post in posts:
+            print(f'文章ID: {post.get("post_id", "未知")}\n內容: {post.get("content", "無內容")}\n')
+    
+    return posts

@@ -290,14 +290,29 @@ class PerformanceMonitor:
         }
         tracemalloc.clear_traces()
         
+    def shutdown(self):
+        """關閉性能監控器並保存指標"""
+        if self.enabled:
+            try:
+                self.save_metrics()
+                tracemalloc.stop()
+                self.logger.info("性能監控器已關閉")
+            except Exception as e:
+                self.logger.error(f"關閉性能監控器時發生錯誤: {str(e)}")
+        self.enabled = False  # 標記為已關閉，避免後續操作
+
     def __del__(self):
         """清理資源"""
         if self.enabled:
             try:
                 self.save_metrics()
                 tracemalloc.stop()
-            except:
-                pass
+            except Exception as e:
+                try:
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"清理性能監控器資源時發生錯誤: {str(e)}")
+                except:
+                    pass  # 在最終的異常處理中避免更多錯誤
 
 # 定義裝飾器用於追蹤函數執行時間
 def track_performance(operation_name=None):
