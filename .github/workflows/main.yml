@@ -31,14 +31,16 @@ jobs:
         with:
           fetch-depth: 1  # 減少 Git 歷史以加快檢出
 
-      - name: 設定 Docker 環境
-        uses: docker/setup-buildx-action@v3
+      - name: 設定 Python 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
 
-      - name: 安裝 Docker Compose
+      - name: 安裝依賴套件
         run: |
-          sudo apt-get update
-          sudo apt-get install -y docker-compose-plugin
-          docker compose version
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
 
       - name: 建立日誌目錄
         run: mkdir -p logs
@@ -185,7 +187,19 @@ jobs:
           # 安裝 psutil 以供檢查記憶體腳本使用
           pip install psutil
 
-      - name: 構建並啟動 Docker Compose
+      - name: 檢查環境變數
+        run: python src/check_env.py
+
+      - name: 初始化資料庫
+        run: python src/init_db.py
+
+      - name: 檢查記憶體使用量
+        run: python src/check_memory.py
+
+      - name: 運行程式
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          PYTHONUNBUFFERED: 1
         run: |
           # 創建運行腳本
           cat > run_with_timeout.sh << 'EOL'
@@ -194,34 +208,7 @@ jobs:
           # 設定超時時間 (從環境變數獲取，預設20分鐘)
           TIMEOUT=${EXECUTION_TIMEOUT:-1200}
           
-          # 改用直接執行 Python 而不依賴 Docker Compose
-          echo "設定 Python 環境..."
-          python -m pip install --upgrade pip
-          pip install --no-cache-dir -r requirements.txt
-          
-          echo "檢查環境變數..."
-          python src/check_env.py
-          if [ $? -ne 0 ]; then
-            echo "環境變數檢查失敗"
-            exit 1
-          fi
-          
-          echo "初始化資料庫..."
-          python src/init_db.py
-          if [ $? -ne 0 ]; then
-            echo "資料庫初始化失敗"
-            exit 1
-          fi
-          
-          echo "檢查系統記憶體..."
-          python src/check_memory.py
-          if [ $? -ne 0 ]; then
-            echo "系統記憶體檢查失敗"
-            exit 1
-          fi
-          
-          echo "啟動主程式..."
-          # 在背景執行主程式
+          # 啟動主程式
           python -m src.main &
           PID=$!
           
