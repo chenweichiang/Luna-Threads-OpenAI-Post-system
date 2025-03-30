@@ -1,10 +1,10 @@
 <div align="center">
-  <img src="luna.png" alt="Luna" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);">
+  <img src="luna_new.png" alt="Luna" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);">
   <h1>ThreadsPoster - Threads 自動回覆與內容發布系統</h1>
   <p>🌟 由 Luna 提供智能社群互動體驗 🌟</p>
   
-  [![Version](https://img.shields.io/badge/version-1.1.8-blue.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
-  [![Last Updated](https://img.shields.io/badge/last%20updated-2025.03.30-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
+  [![Version](https://img.shields.io/badge/version-1.1.9-blue.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
+  [![Last Updated](https://img.shields.io/badge/last%20updated-2025.03.31-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system/blob/main/LICENSE)
   [![Author](https://img.shields.io/badge/author-Chiang%2C%20Chenwei-orange.svg)](https://github.com/chenweichiang)
 </div>
