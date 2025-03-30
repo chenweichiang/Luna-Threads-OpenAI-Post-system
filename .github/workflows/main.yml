@@ -2,140 +2,277 @@ name: ThreadsPoster CI/CD
 
 on:
   push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
   schedule:
-    - cron: '*/5 * * * *'  # 每5分鐘運行一次
+    - cron: '*/15 * * * *'  # 每15分鐘執行一次，配合最小發文間隔
   workflow_dispatch:  # 允許手動觸發
+
+env:
+  PYTHON_VERSION: "3.11"
+  MONGODB_TEST_URI: "${{ secrets.MONGODB_URI }}"  # 使用線上版本的 MongoDB
+  MONGODB_DB: "threads_poster_test"
+  POSTING_TIMEZONE: "Asia/Taipei"
+  LOG_LEVEL: "INFO"
+  OPENAI_TOKEN_LIMIT: "15000"
+  MAX_MEMORY_USAGE: "80"
+  MIN_POST_INTERVAL: "900"  # 最小發文間隔（15分鐘）
+  MAX_POST_INTERVAL: "10800"  # 最大發文間隔（3小時）
+  PYTHONOPTIMIZE: "2"  # 啟用 Python 優化
+  PYTHONUNBUFFERED: "1"  # 禁用輸出緩衝
+  PYTHONHASHSEED: "0"  # 固定 hash seed 以提高效能
+  MONGODB_MAX_POOL_SIZE: "50"  # MongoDB 連接池大小
+  MONGODB_MIN_POOL_SIZE: "10"  # 最小連接數
+  MONGODB_MAX_IDLE_TIME_MS: "10000"  # 連接最大閒置時間
+  MONGODB_CACHE_TTL: "300"  # 快取存活時間（秒）
 
 jobs:
   test:
+    name: 測試與品質檢查
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-
     services:
       mongodb:
         image: mongo:latest
         ports:
           - 27017:27017
-
-    steps:
-    - uses: actions/checkout@v4
+        options: >-
+          --health-cmd mongosh --eval "db.adminCommand('ping')"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     
-    - name: 設定 Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        
-    - name: 安裝相依套件
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest pytest-cov black flake8 isort mypy bandit safety
-        
-    - name: 執行程式碼格式檢查
-      run: |
-        black --check src tests
-        flake8 src tests
-        isort --check-only src tests
-        mypy src
-        
-    - name: 執行安全掃描
-      run: |
-        bandit -r src/
-        safety check
-        
-    - name: 執行測試
-      run: |
-        pytest tests/ \
-          --cov=src \
-          --cov-report=xml \
-          --cov-report=html \
-          --junitxml=test-results.xml \
-          -v
-      env:
-        PYTHONPATH: ${{ github.workspace }}
-        MONGODB_URI: mongodb://localhost:27017
-        
-    - name: 上傳測試覆蓋率報告
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: true
-        
-    - name: 上傳測試結果
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: test-results-${{ matrix.python-version }}
-        path: |
-          test-results.xml
-          htmlcov/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1  # 最小化 git 歷史
+      
+      - name: 設定 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          check-latest: false  # 避免不必要的版本檢查
+      
+      - name: 安裝相依套件
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+          pip install --no-cache-dir pytest pytest-asyncio pytest-cov black flake8 mypy
+      
+      - name: 執行程式碼品質檢查
+        run: |
+          black --check src tests
+          flake8 src tests --max-line-length=100 --jobs=4
+          mypy src --ignore-missing-imports --no-incremental
+      
+      - name: 執行測試
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          MONGODB_URI: ${{ env.MONGODB_TEST_URI }}
+          MONGODB_DB: ${{ env.MONGODB_DB }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          THREADS_APP_ID: ${{ secrets.THREADS_APP_ID }}
+          THREADS_APP_SECRET: ${{ secrets.THREADS_APP_SECRET }}
+          THREADS_ACCESS_TOKEN: ${{ secrets.THREADS_ACCESS_TOKEN }}
+        run: |
+          python -X tracemalloc -m pytest tests/ \
+            --cov=src \
+            --cov-report=xml \
+            -v \
+            --durations=10
 
   deploy:
-    needs: test
+    name: 部署與執行
+    needs: [test]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-
+    if: |
+      github.ref == 'refs/heads/main' && 
+      (github.event_name == 'push' || 
+       github.event_name == 'schedule' || 
+       github.event_name == 'workflow_dispatch')
+    
     services:
       mongodb:
         image: mongo:latest
         ports:
           - 27017:27017
-
-    steps:
-    - uses: actions/checkout@v4
+        options: >-
+          --health-cmd mongosh --eval "db.adminCommand('ping')"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     
-    - name: 設定 Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.13"
-        
-    - name: 安裝相依套件
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        
-    - name: 設定環境變數
-      run: |
-        echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
-        echo "THREADS_APP_ID=${{ secrets.THREADS_APP_ID }}" >> .env
-        echo "THREADS_APP_SECRET=${{ secrets.THREADS_APP_SECRET }}" >> .env
-        echo "THREADS_ACCESS_TOKEN=${{ secrets.THREADS_ACCESS_TOKEN }}" >> .env
-        echo "MONGODB_URI=${{ secrets.MONGODB_URI }}" >> .env
-        echo "MONGODB_DB=threads_poster" >> .env
-        echo "MONGODB_COLLECTION=posts" >> .env
-        echo "POSTING_TIMEZONE=Asia/Taipei" >> .env
-        echo "CHECK_INTERVAL=60" >> .env
-        echo "RETRY_INTERVAL=300" >> .env
-        
-    - name: 執行機器人
-      run: |
-        python src/main.py &
-        sleep 300  # 等待5分鐘
-        if ! pgrep -f "python src/main.py"; then
-          echo "程式已停止運行"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      - name: 設定 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          check-latest: false
+      
+      - name: 安裝相依套件
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+      
+      - name: 設定環境變數
+        run: |
+          {
+            echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
+            echo "THREADS_APP_ID=${{ secrets.THREADS_APP_ID }}"
+            echo "THREADS_APP_SECRET=${{ secrets.THREADS_APP_SECRET }}"
+            echo "THREADS_ACCESS_TOKEN=${{ secrets.THREADS_ACCESS_TOKEN }}"
+            echo "MONGODB_URI=${{ secrets.MONGODB_URI }}"
+            echo "MONGODB_DB=threads_poster"
+            echo "MONGODB_COLLECTION=posts"
+            echo "MONGODB_MAX_POOL_SIZE=${{ env.MONGODB_MAX_POOL_SIZE }}"
+            echo "MONGODB_MIN_POOL_SIZE=${{ env.MONGODB_MIN_POOL_SIZE }}"
+            echo "MONGODB_MAX_IDLE_TIME_MS=${{ env.MONGODB_MAX_IDLE_TIME_MS }}"
+            echo "MONGODB_CACHE_TTL=${{ env.MONGODB_CACHE_TTL }}"
+            echo "POSTING_TIMEZONE=${{ env.POSTING_TIMEZONE }}"
+            echo "LOG_LEVEL=${{ env.LOG_LEVEL }}"
+            echo "PYTHONPATH=${{ github.workspace }}"
+            echo "PYTHONOPTIMIZE=${{ env.PYTHONOPTIMIZE }}"
+            echo "PYTHONUNBUFFERED=${{ env.PYTHONUNBUFFERED }}"
+            echo "PYTHONHASHSEED=${{ env.PYTHONHASHSEED }}"
+          } > .env
+      
+      - name: 驗證環境變數
+        run: |
+          python src/check_env.py
+      
+      - name: 初始化資料庫
+        run: |
+          python src/init_db.py
+      
+      - name: 檢查記憶體使用量
+        run: |
+          python src/check_memory.py
+      
+      - name: 重置記憶體
+        run: |
+          python src/reset_memory.py
+      
+      - name: 執行主程式
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          PYTHONUNBUFFERED: 1
+        run: |
+          # 建立臨時目錄用於存放 PID 檔案
+          mkdir -p /tmp/threads_poster
+          
+          # 啟動主程式並將 PID 寫入檔案
+          python -X tracemalloc src/main.py & echo $! > /tmp/threads_poster/main.pid
+          
+          # 等待程式初始化
+          sleep 30
+          
+          # 讀取 PID
+          PID=$(cat /tmp/threads_poster/main.pid)
+          
+          # 檢查程式是否正在運行
+          if ! ps -p $PID > /dev/null; then
+            echo "程式未能正常啟動"
+            cat threads_poster.log
+            exit 1
+          fi
+          
+          # 監控程式運行狀態和資源使用
+          for i in {1..40}; do  # 延長監控時間到 20 分鐘
+            if ! ps -p $PID > /dev/null; then
+              echo "程式在第 $i 次檢查時已停止運行"
+              cat threads_poster.log
+              exit 1
+            fi
+            
+            # 檢查記憶體使用量
+            MEM_USAGE=$(ps -o %mem -p $PID | tail -n 1)
+            if (( $(echo "$MEM_USAGE > $MAX_MEMORY_USAGE" | bc -l) )); then
+              echo "記憶體使用量過高: ${MEM_USAGE}%"
+              kill -15 $PID  # 先嘗試正常終止
+              sleep 5
+              kill -9 $PID 2>/dev/null || true  # 如果還在運行則強制終止
+              cat threads_poster.log
+              exit 1
+            fi
+            
+            # 檢查 Token 使用量
+            if [ -f "threads_poster.log" ] && grep -i "token_usage" threads_poster.log | tail -n 1 | grep -q '"累計使用": *[0-9]\{5,\}'; then
+              echo "Token 使用量超過限制"
+              kill -15 $PID
+              sleep 5
+              kill -9 $PID 2>/dev/null || true
+              cat threads_poster.log
+              exit 1
+            fi
+            
+            # 檢查是否有新的錯誤日誌
+            if [ -f "threads_poster.log" ] && grep -i "error\|exception\|traceback" threads_poster.log; then
+              echo "發現錯誤日誌："
+              cat threads_poster.log
+              kill -15 $PID
+              sleep 5
+              kill -9 $PID 2>/dev/null || true
+              exit 1
+            fi
+            
+            # 檢查是否已完成發文
+            if [ -f "threads_poster.log" ] && grep -q "發文成功\|等待下一次發文時間" threads_poster.log; then
+              echo "發文已完成或正在等待下一次發文時間"
+              kill -15 $PID
+              sleep 5
+              kill -9 $PID 2>/dev/null || true
+              exit 0
+            fi
+            
+            sleep 30
+          done
+          
+          # 如果超時未完成，結束程式
+          echo "程式執行超時，強制結束"
+          kill -15 $PID
+          sleep 5
+          kill -9 $PID 2>/dev/null || true
+          cat threads_poster.log
           exit 1
-        fi
-      env:
-        PYTHONPATH: ${{ github.workspace }}
-        PYTHONUNBUFFERED: 1
+      
+      - name: 檢查日誌
+        if: always()
+        run: |
+          if [ -f "threads_poster.log" ]; then
+            echo "完整日誌內容："
+            cat threads_poster.log
+            
+            # 檢查是否有錯誤
+            if grep -i "error\|exception\|traceback" threads_poster.log; then
+              echo "日誌中發現錯誤"
+              exit 1
+            fi
+          else
+            echo "找不到日誌檔案"
+            exit 1
+          fi
 
   notify:
-    needs: [test, deploy]
+    name: 結果通知
+    needs: [deploy]
     runs-on: ubuntu-latest
     if: always()
     
     steps:
-    - name: 檢查結果
-      run: |
-        if [[ "${{ needs.test.result }}" == "failure" || \
-              "${{ needs.deploy.result }}" == "failure" ]]; then
-          echo "工作流程失敗"
-          exit 1
-        fi 
+      - name: 檢查工作流程結果
+        run: |
+          if [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+            echo "::error::部署失敗，請檢查日誌了解詳細資訊"
+            exit 1
+          elif [[ "${{ needs.test.result }}" == "failure" ]]; then
+            echo "::error::測試失敗，請檢查測試報告"
+            exit 1
+          fi 

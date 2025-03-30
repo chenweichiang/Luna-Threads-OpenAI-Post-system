@@ -1,9 +1,26 @@
+"""
+Version: 2024.03.31 (v1.1.6)
+Author: ThreadsPoster Team
+Description: 檢查最新文章工具
+Last Modified: 2024.03.31
+Changes:
+- 實現檢查最新文章功能
+- 加強錯誤處理
+"""
+
 import asyncio
 import json
-from src.config import Config
-from src.db_handler import DatabaseHandler
+import os
+import sys
+
+# 添加父目錄到路徑，以便能夠導入相關模組
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config import Config
+from db_handler import DatabaseHandler
 
 async def get_posts():
+    """獲取最近的3篇文章"""
     config = Config()
     db = DatabaseHandler(config)
     await db.initialize()
