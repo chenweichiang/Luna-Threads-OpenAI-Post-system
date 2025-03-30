@@ -1,8 +1,10 @@
 """
-Version: 2024.03.31 (v1.1.6)
+Version: 2025.03.31 (v1.1.9)
 Author: ThreadsPoster Team
-Description: 監控器類別，負責協調系統各個組件的運作
-Last Modified: 2024.03.31
+Description: 監控器類別，負責協調系統運行
+Copyright (c) 2025 Chiang, Chenwei. All rights reserved.
+License: MIT License
+Last Modified: 2025.03.31
 Changes:
 - 實現基本監控功能
 - 加強錯誤處理

@@ -1,8 +1,10 @@
 """
-Version: 2024.03.31 (v1.1.6)
+Version: 2025.03.31 (v1.1.9)
 Author: ThreadsPoster Team
 Description: 時間控制器類別，負責管理系統運行時間和排程
-Last Modified: 2024.03.31
+Copyright (c) 2025 Chiang, Chenwei. All rights reserved.
+License: MIT License
+Last Modified: 2025.03.31
 Changes:
 - 實現基本時間控制功能
 - 加強錯誤處理
@@ -10,6 +12,10 @@ Changes:
 - 動態調整發文間隔
 - 支援不同時段的發文頻率設定
 - 優化時區處理
+- 加強晚間發文比例
+- 實現智能發文計劃生成
+- 處理24點特殊情況
+- 測試模式支援
 """
 
 import logging
