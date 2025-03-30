@@ -66,6 +66,7 @@ jobs:
           LOG_LEVEL=${{ env.LOG_LEVEL }}
           DEBUG=False
           MAX_POSTS_PER_DAY=${{ env.MAX_POSTS_PER_DAY }}
+          MAX_MEMORY_USAGE=${{ env.MAX_MEMORY_USAGE }}
           EOF
 
       - name: 創建檢查環境腳本
@@ -113,7 +114,7 @@ jobs:
           async def init_db():
               # 獲取環境變數
               mongo_uri = os.getenv("MONGODB_URI")
-              db_name = os.getenv("MONGODB_DB_NAME", "threads_db")
+              db_name = os.getenv("MONGODB_DB_NAME", "threadsposter")
               collection_name = os.getenv("MONGODB_COLLECTION", "posts")
               
               if not mongo_uri:
@@ -193,49 +194,75 @@ jobs:
           # 設定超時時間 (從環境變數獲取，預設20分鐘)
           TIMEOUT=${EXECUTION_TIMEOUT:-1200}
           
-          # 啟動 Docker Compose (使用新版命令格式)
-          docker compose up -d
+          # 改用直接執行 Python 而不依賴 Docker Compose
+          echo "設定 Python 環境..."
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
           
-          # 檢查容器是否在運行
-          if [ $(docker ps -q -f name=threads_poster) ]; then
-            echo "容器已啟動，開始監控日誌..."
-            
-            # 檢查程式是否在指定時間內完成
-            for ((i=1; i<=$TIMEOUT; i++)); do
-              # 每30秒檢查一次日誌
-              if [ $((i % 30)) -eq 0 ]; then
-                echo "已運行 $i 秒..."
-                
-                # 從容器中複製日誌
-                docker cp threads_poster:/app/logs/threads_poster.log ./logs/ 2>/dev/null || true
-                
-                # 檢查是否有錯誤或是否已發文完成
-                if [ -f "logs/threads_poster.log" ]; then
-                  if grep -q "發文成功" logs/threads_poster.log; then
-                    echo "檢測到發文成功，結束程式"
-                    docker compose down
-                    exit 0
-                  fi
-                  
-                  if grep -q "ERROR\|CRITICAL" logs/threads_poster.log; then
-                    echo "檢測到錯誤日誌："
-                    grep -A 5 "ERROR\|CRITICAL" logs/threads_poster.log | tail -n 10
-                  fi
-                fi
-              fi
-              
-              sleep 1
-            done
-            
-            # 如果超時則終止容器
-            echo "程式執行超過 $TIMEOUT 秒，強制終止"
-            docker compose down
-            exit 1
-          else
-            echo "容器啟動失敗"
-            docker compose logs
+          echo "檢查環境變數..."
+          python src/check_env.py
+          if [ $? -ne 0 ]; then
+            echo "環境變數檢查失敗"
             exit 1
           fi
+          
+          echo "初始化資料庫..."
+          python src/init_db.py
+          if [ $? -ne 0 ]; then
+            echo "資料庫初始化失敗"
+            exit 1
+          fi
+          
+          echo "檢查系統記憶體..."
+          python src/check_memory.py
+          if [ $? -ne 0 ]; then
+            echo "系統記憶體檢查失敗"
+            exit 1
+          fi
+          
+          echo "啟動主程式..."
+          # 在背景執行主程式
+          python -m src.main &
+          PID=$!
+          
+          # 檢查程式是否在指定時間內完成
+          for ((i=1; i<=$TIMEOUT; i++)); do
+            # 檢查程式是否還在運行
+            if ! ps -p $PID > /dev/null; then
+              echo "程式已完成執行"
+              exit 0
+            fi
+            
+            # 每30秒檢查一次日誌
+            if [ $((i % 30)) -eq 0 ]; then
+              echo "已運行 $i 秒..."
+              
+              # 檢查是否有錯誤或是否已發文完成
+              if [ -f "logs/threads_poster.log" ]; then
+                if grep -q "發文成功" logs/threads_poster.log; then
+                  echo "檢測到發文成功，結束程式"
+                  kill -15 $PID
+                  sleep 5
+                  kill -9 $PID 2>/dev/null || true
+                  exit 0
+                fi
+                
+                if grep -q "ERROR\|CRITICAL" logs/threads_poster.log; then
+                  echo "檢測到錯誤日誌："
+                  grep -A 5 "ERROR\|CRITICAL" logs/threads_poster.log | tail -n 10
+                fi
+              fi
+            fi
+            
+            sleep 1
+          done
+          
+          # 如果超時則終止程式
+          echo "程式執行超過 $TIMEOUT 秒，強制終止"
+          kill -15 $PID
+          sleep 5
+          kill -9 $PID 2>/dev/null || true
+          exit 1
           EOL
           
           # 設定執行權限
