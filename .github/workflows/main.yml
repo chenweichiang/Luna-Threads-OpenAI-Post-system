@@ -1,3 +1,4 @@
+# 已禁用的舊工作流程，請使用 python_workflow.yml 替代
 name: ThreadsPoster 自動化工作流程
 
 on:
@@ -31,13 +32,13 @@ jobs:
         with:
           fetch-depth: 1  # 減少 Git 歷史以加快檢出
 
-      - name: 設定 Python 環境
+      - name: 設定 Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
-      - name: 安裝依賴套件
+      - name: 安裝依賴
         run: |
           python -m pip install --upgrade pip
           pip install --no-cache-dir -r requirements.txt
@@ -71,9 +72,10 @@ jobs:
           MAX_MEMORY_USAGE=${{ env.MAX_MEMORY_USAGE }}
           EOF
 
-      - name: 創建檢查環境腳本
+      - name: 檢查環境變數
         run: |
-          cat << 'EOF' > src/check_env.py
+          # 創建檢查腳本
+          cat > check_env.py << 'EOF'
           """檢查環境變數是否存在並有效"""
           import os
           import sys
@@ -102,9 +104,13 @@ jobs:
               sys.exit(0)
           EOF
 
-      - name: 創建初始化資料庫腳本
+          # 運行檢查
+          python check_env.py
+
+      - name: 初始化資料庫
         run: |
-          cat << 'EOF' > src/init_db.py
+          # 創建初始化腳本
+          cat > init_db.py << 'EOF'
           """初始化資料庫連接和集合"""
           import asyncio
           import os
@@ -155,9 +161,16 @@ jobs:
                   exit(1)
           EOF
 
-      - name: 建立檢查記憶體腳本
+          # 運行初始化
+          python init_db.py
+
+      - name: 檢查系統資源
         run: |
-          cat << 'EOF' > src/check_memory.py
+          # 安裝 psutil 套件
+          pip install psutil
+          
+          # 創建記憶體檢查腳本
+          cat > check_memory.py << 'EOF'
           """檢查系統記憶體使用情況"""
           import os
           import psutil
@@ -184,79 +197,87 @@ jobs:
                   exit(1)
           EOF
           
-          # 安裝 psutil 以供檢查記憶體腳本使用
-          pip install psutil
-
-      - name: 檢查環境變數
-        run: python src/check_env.py
-
-      - name: 初始化資料庫
-        run: python src/init_db.py
-
-      - name: 檢查記憶體使用量
-        run: python src/check_memory.py
+          # 運行記憶體檢查
+          python check_memory.py
 
       - name: 運行程式
         env:
           PYTHONPATH: ${{ github.workspace }}
           PYTHONUNBUFFERED: 1
         run: |
-          # 創建運行腳本
-          cat > run_with_timeout.sh << 'EOL'
-          #!/bin/bash
-          
-          # 設定超時時間 (從環境變數獲取，預設20分鐘)
-          TIMEOUT=${EXECUTION_TIMEOUT:-1200}
+          # 創建超時監控腳本
+          cat > run_with_timeout.py << 'EOF'
+          """運行主程式並監控超時"""
+          import os
+          import sys
+          import time
+          import subprocess
+          import signal
+          import re
+
+          # 設定超時時間
+          timeout = int(os.getenv("EXECUTION_TIMEOUT", "1200"))
           
           # 啟動主程式
-          python -m src.main &
-          PID=$!
+          print("啟動主程式...")
+          process = subprocess.Popen(["python", "-m", "src.main"])
           
-          # 檢查程式是否在指定時間內完成
-          for ((i=1; i<=$TIMEOUT; i++)); do
-            # 檢查程式是否還在運行
-            if ! ps -p $PID > /dev/null; then
-              echo "程式已完成執行"
-              exit 0
-            fi
-            
-            # 每30秒檢查一次日誌
-            if [ $((i % 30)) -eq 0 ]; then
-              echo "已運行 $i 秒..."
+          start_time = time.time()
+          last_check = start_time
+          
+          try:
+              while process.poll() is None:
+                  # 檢查是否超時
+                  current_time = time.time()
+                  if current_time - start_time > timeout:
+                      print(f"程式執行超過 {timeout} 秒，強制終止")
+                      process.terminate()
+                      time.sleep(5)
+                      process.kill()
+                      sys.exit(1)
+                  
+                  # 每30秒檢查一次日誌
+                  if current_time - last_check >= 30:
+                      print(f"已運行 {int(current_time - start_time)} 秒...")
+                      last_check = current_time
+                      
+                      # 檢查是否已發文成功或出現錯誤
+                      try:
+                          if os.path.exists("logs/threads_poster.log"):
+                              with open("logs/threads_poster.log", "r", encoding="utf-8") as f:
+                                  content = f.read()
+                                  if "發文成功" in content:
+                                      print("檢測到發文成功，結束程式")
+                                      process.terminate()
+                                      time.sleep(5)
+                                      process.kill()
+                                      sys.exit(0)
+                                  
+                                  # 查找錯誤
+                                  errors = re.findall(r"(ERROR|CRITICAL).*", content)
+                                  if errors:
+                                      print("檢測到錯誤日誌：")
+                                      for error in errors[-5:]:  # 顯示最後5條錯誤
+                                          print(error)
+                      except Exception as e:
+                          print(f"檢查日誌時出錯: {e}")
+                  
+                  time.sleep(1)
+                  
+              # 正常結束
+              print("程式已完成執行")
+              sys.exit(0)
               
-              # 檢查是否有錯誤或是否已發文完成
-              if [ -f "logs/threads_poster.log" ]; then
-                if grep -q "發文成功" logs/threads_poster.log; then
-                  echo "檢測到發文成功，結束程式"
-                  kill -15 $PID
-                  sleep 5
-                  kill -9 $PID 2>/dev/null || true
-                  exit 0
-                fi
-                
-                if grep -q "ERROR\|CRITICAL" logs/threads_poster.log; then
-                  echo "檢測到錯誤日誌："
-                  grep -A 5 "ERROR\|CRITICAL" logs/threads_poster.log | tail -n 10
-                fi
-              fi
-            fi
-            
-            sleep 1
-          done
+          except KeyboardInterrupt:
+              print("接收到中斷信號，終止程式")
+              process.terminate()
+              time.sleep(5)
+              process.kill()
+              sys.exit(1)
+          EOF
           
-          # 如果超時則終止程式
-          echo "程式執行超過 $TIMEOUT 秒，強制終止"
-          kill -15 $PID
-          sleep 5
-          kill -9 $PID 2>/dev/null || true
-          exit 1
-          EOL
-          
-          # 設定執行權限
-          chmod +x run_with_timeout.sh
-          
-          # 執行腳本
-          ./run_with_timeout.sh
+          # 運行監控腳本
+          python run_with_timeout.py
 
       - name: 檢查日誌
         if: always()
@@ -270,12 +291,19 @@ jobs:
             grep "發文成功" logs/threads_poster.log || echo "未找到成功發文記錄"
           else
             echo "找不到日誌文件"
+            # 顯示當前目錄下的所有文件
+            echo "=== 當前目錄內容 ==="
+            ls -la
+            echo "=== 日誌目錄內容(如果存在) ==="
+            ls -la logs/ || echo "日誌目錄不存在"
           fi
 
       - name: 上傳日誌作為構件
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: threads-poster-logs
-          path: logs/*.log
+          name: threadsposter-logs
+          path: |
+            logs/*.log
+            *.log
           retention-days: 7 
