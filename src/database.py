@@ -1,13 +1,16 @@
 """
-Version: 2024.03.30
+Version: 2024.03.31 (v1.1.6)
 Author: ThreadsPoster Team
-Description: 資料庫處理器，負責管理與資料庫的所有互動
-Last Modified: 2024.03.30
+Description: 資料庫類別，負責管理 MongoDB 連接
+Last Modified: 2024.03.31
 Changes:
-- 改進資料庫連接管理
+- 實現基本資料庫連接和操作
 - 加強錯誤處理
-- 優化快取機制
-- 統一日誌路徑
+- 優化連接管理
+- 加入更多資料庫操作方法
+- 加強資料完整性檢查
+- 改進資料存取效能
+- 新增資料清理機制
 """
 
 import logging
@@ -17,41 +20,52 @@ import pytz
 from typing import Optional, Dict, Any, List
 from cachetools import TTLCache, LRUCache
 from src.exceptions import DatabaseError
+import os
+import asyncio
+from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo import MongoClient
+from contextlib import asynccontextmanager
+from datetime import timezone
 
-class DatabaseHandler:
-    """資料庫處理器類別"""
-    
-    def __init__(self, mongodb_uri: str, database: str):
-        """初始化資料庫處理器
+logger = logging.getLogger(__name__)
+
+class Database:
+    def __init__(self, config):
+        """初始化資料庫
         
         Args:
-            mongodb_uri: MongoDB 連接字串
-            database: 資料庫名稱
+            config: 設定物件
         """
-        self.mongodb_uri = mongodb_uri
-        self.database_name = database
+        self.config = config
         self.client = None
         self.db = None
         self.logger = logging.getLogger(__name__)
         
+        # 設定連接池
+        self.max_pool_size = int(os.getenv("MONGODB_MAX_POOL_SIZE", "50"))
+        self.min_pool_size = int(os.getenv("MONGODB_MIN_POOL_SIZE", "10"))
+        self.max_idle_time_ms = int(os.getenv("MONGODB_MAX_IDLE_TIME_MS", "10000"))
+        
         # 初始化快取
+        self.cache_ttl = int(os.getenv("MONGODB_CACHE_TTL", "300"))  # 5分鐘快取
+        self.posts_cache = TTLCache(maxsize=1000, ttl=self.cache_ttl)
+        self.count_cache = TTLCache(maxsize=100, ttl=60)  # 1分鐘快取計數
         self.post_count_cache = TTLCache(maxsize=100, ttl=3600)  # 1小時過期
         self.article_cache = LRUCache(maxsize=1000)  # 最多保存1000篇文章
         self.personality_cache = TTLCache(maxsize=10, ttl=3600)  # 人設快取
         
-    async def connect(self):
-        """連接到資料庫"""
+    async def initialize(self):
+        """初始化資料庫連接"""
         try:
-            self.client = motor.motor_asyncio.AsyncIOMotorClient(self.mongodb_uri)
-            self.db = self.client[self.database_name]
+            # 建立資料庫連接
+            self.client = motor.motor_asyncio.AsyncIOMotorClient(self.config.MONGODB_URI)
+            self.db = self.client[self.config.MONGODB_DB_NAME]
             
             # 建立索引
-            await self.db.posts.create_index([("post_id", 1)], unique=True)
-            await self.db.posts.create_index([("created_at", -1)])
-            await self.db.post_counts.create_index([("date", 1)], unique=True)
+            await self.db.articles.create_index([("created_at", -1)])
+            await self.db.articles.create_index([("post_id", 1)], unique=True)
+            await self.db.personality_memories.create_index([("context", 1)], unique=True)
             
-            # 測試連接
-            await self.client.admin.command('ping')
             self.logger.info("資料庫連接成功")
             
         except Exception as e:
@@ -64,7 +78,53 @@ class DatabaseHandler:
             self.client.close()
             self.logger.info("資料庫連接已關閉")
             
-    async def get_today_posts_count(self) -> int:
+    async def save_post(self, post_data: dict) -> bool:
+        """儲存發文資料到資料庫
+        
+        Args:
+            post_data: 包含發文資訊的字典
+            
+        Returns:
+            bool: 儲存成功返回 True，失敗返回 False
+        """
+        try:
+            if not isinstance(post_data, dict):
+                raise ValueError("post_data 必須是字典類型")
+                
+            # 檢查必要欄位
+            required_fields = ["post_id", "content", "timestamp"]
+            for field in required_fields:
+                if field not in post_data:
+                    raise ValueError(f"缺少必要欄位：{field}")
+            
+            # 確保 post_id 是字串
+            post_data["post_id"] = str(post_data["post_id"])
+            
+            # 確保時間戳記是 UTC 時間
+            if isinstance(post_data["timestamp"], datetime):
+                post_data["timestamp"] = post_data["timestamp"].astimezone(timezone.utc)
+            
+            # 插入資料
+            if self.client is None:
+                await self.initialize()
+                
+            result = await self.db.posts.insert_one(post_data)
+            success = result.inserted_id is not None
+            
+            if success:
+                self.logger.info("成功儲存發文，ID：%s", post_data["post_id"])
+                # 更新快取
+                self.posts_cache[post_data["post_id"]] = post_data
+            else:
+                self.logger.error("儲存發文失敗：無法獲取插入ID")
+                
+            return success
+            
+        except Exception as e:
+            self.logger.error("儲存發文失敗：%s", str(e))
+            return False
+            
+    async def get_post_count(self) -> int:
         """獲取今日發文數量
         
         Returns:
@@ -72,20 +132,20 @@ class DatabaseHandler:
         """
         try:
             # 檢查快取
-            cache_key = datetime.now(pytz.UTC).strftime("%Y-%m-%d")
-            if cache_key in self.post_count_cache:
-                return self.post_count_cache[cache_key]
+            if "today_post_count" in self.post_count_cache:
+                return self.post_count_cache["today_post_count"]
                 
-            # 計算今日開始和結束時間
-            now = datetime.now(pytz.UTC)
-            today = now.strftime("%Y-%m-%d")
+            # 計算今日發文數量
+            today_start = datetime.now(pytz.UTC).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            today_end = today_start + timedelta(days=1)
             
-            # 從計數集合中獲取今日計數
-            count_doc = await self.db.post_counts.find_one({"date": today})
-            count = count_doc["count"] if count_doc else 0
+            count = await self.count_articles_between(today_start, today_end)
             
             # 更新快取
-            self.post_count_cache[cache_key] = count
+            self.post_count_cache["today_post_count"] = count
+            
             return count
             
         except Exception as e:
@@ -93,102 +153,81 @@ class DatabaseHandler:
             raise DatabaseError(f"獲取今日發文數量失敗：{str(e)}")
             
     async def increment_post_count(self):
-        """增加今日發文數量"""
+        """增加發文計數"""
         try:
-            # 清除快取
-            cache_key = datetime.now(pytz.UTC).strftime("%Y-%m-%d")
-            if cache_key in self.post_count_cache:
-                del self.post_count_cache[cache_key]
-                
-            # 更新計數集合
-            today = datetime.now(pytz.UTC).strftime("%Y-%m-%d")
-            result = await self.db.post_counts.update_one(
-                {"date": today},
-                {"$inc": {"count": 1}},
-                upsert=True
-            )
-            
-            if result.acknowledged:
-                self.logger.info("發文計數已更新")
-            else:
-                raise DatabaseError("更新發文計數失敗")
-            
-        except Exception as e:
-            self.logger.error(f"增加發文數量時發生錯誤：{str(e)}")
-            raise DatabaseError(f"增加發文數量失敗：{str(e)}")
-            
-    async def save_article(self, article: Dict[str, Any]):
-        """儲存文章
-        
-        Args:
-            article: 文章資訊
-        """
-        try:
-            # 更新資料庫
-            result = await self.db.articles.insert_one(article)
-            
             # 更新快取
-            self.article_cache[str(result.inserted_id)] = article
-            self.logger.info(f"文章儲存成功：{result.inserted_id}")
+            if "today_post_count" in self.post_count_cache:
+                self.post_count_cache["today_post_count"] += 1
+            else:
+                await self.get_post_count()  # 重新載入快取
+                
+            self.logger.info("發文計數已增加")
             
         except Exception as e:
-            self.logger.error(f"儲存文章時發生錯誤：{str(e)}")
-            raise DatabaseError(f"儲存文章失敗：{str(e)}")
+            self.logger.error(f"增加發文計數時發生錯誤：{str(e)}")
+            raise DatabaseError(f"增加發文計數失敗：{str(e)}")
             
-    async def get_user_history(self, days: int = 7) -> List[Dict[str, Any]]:
-        """獲取用戶發文歷史
+    async def get_post(self, post_id: str) -> Optional[Dict[str, Any]]:
+        """獲取指定 ID 的發文資料
         
         Args:
-            days: 要查詢的天數
+            post_id: 發文 ID
             
         Returns:
-            List[Dict[str, Any]]: 發文歷史列表
+            Optional[Dict[str, Any]]: 發文資料，如果不存在則返回 None
         """
         try:
-            # 計算時間範圍
-            now = datetime.now(pytz.UTC)
-            start_date = now - timedelta(days=days)
-            
-            # 查詢資料庫
-            cursor = self.db.articles.find({
-                "created_at": {
-                    "$gte": start_date,
-                    "$lt": now
-                }
-            }).sort("created_at", -1)
-            
-            return await cursor.to_list(length=None)
-            
-        except Exception as e:
-            self.logger.error(f"獲取用戶歷史時發生錯誤：{str(e)}")
-            raise DatabaseError(f"獲取用戶歷史失敗：{str(e)}")
-            
-    async def reset_daily_post_count(self):
-        """重置今日發文計數"""
-        try:
-            # 清除快取
-            cache_key = datetime.now(pytz.UTC).strftime("%Y-%m-%d")
-            if cache_key in self.post_count_cache:
-                del self.post_count_cache[cache_key]
+            # 檢查快取
+            if post_id in self.posts_cache:
+                return self.posts_cache[post_id]
                 
-            # 計算今日開始和結束時間
-            now = datetime.now(pytz.UTC)
-            start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_of_day = start_of_day + timedelta(days=1)
+            if self.client is None:
+                await self.initialize()
+                
+            post = await self.db.posts.find_one({"post_id": post_id})
             
-            # 刪除今日的記錄
-            await self.db.posts.delete_many({
-                "created_at": {
-                    "$gte": start_of_day,
-                    "$lt": end_of_day
-                }
-            })
-            self.logger.info("今日發文計數已重置")
+            if post:
+                # 更新快取
+                self.posts_cache[post_id] = post
+                
+            return post
             
         except Exception as e:
-            self.logger.error(f"重置發文計數時發生錯誤：{str(e)}")
-            raise DatabaseError(f"重置發文計數失敗：{str(e)}")
+            self.logger.error("獲取發文資料失敗：%s", str(e))
+            return None
             
+    async def get_recent_posts(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """獲取最近的發文列表
+        
+        Args:
+            limit: 返回的最大數量
+            
+        Returns:
+            List[Dict[str, Any]]: 發文列表
+        """
+        try:
+            if self.client is None:
+                await self.initialize()
+                
+            cursor = self.db.posts.find().sort("timestamp", -1).limit(limit)
+            posts = await cursor.to_list(length=limit)
+            
+            # 更新快取
+            for post in posts:
+                self.posts_cache[post["post_id"]] = post
+                
+            return posts
+            
+        except Exception as e:
+            self.logger.error("獲取最近發文列表失敗：%s", str(e))
+            return []
+            
+    async def clear_cache(self):
+        """清除所有快取"""
+        self.posts_cache.clear()
+        self.count_cache.clear()
+        self.logger.info("快取已清除")
+
     async def get_personality_memory(self, context: str) -> Optional[Dict[str, Any]]:
         """獲取人設記憶
         
@@ -239,78 +278,128 @@ class DatabaseHandler:
             self.logger.error(f"儲存人設記憶時發生錯誤：{str(e)}")
             raise DatabaseError(f"儲存人設記憶失敗：{str(e)}")
             
-    async def get_user_interactions(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """獲取用戶互動歷史
+    async def save_article(self, article: Dict[str, Any]):
+        """儲存文章
+        
+        Args:
+            article: 文章資料
+        """
+        try:
+            await self.db.articles.insert_one(article)
+            self.article_cache[article["post_id"]] = article
+            self.logger.info(f"文章儲存成功：{article['post_id']}")
+        except Exception as e:
+            self.logger.error(f"儲存文章時發生錯誤：{str(e)}")
+            raise DatabaseError(f"儲存文章失敗：{str(e)}")
+            
+    async def get_article(self, post_id: str) -> Optional[Dict[str, Any]]:
+        """獲取文章
+        
+        Args:
+            post_id: 文章 ID
+            
+        Returns:
+            Optional[Dict[str, Any]]: 文章資料，如果不存在則返回 None
+        """
+        try:
+            # 檢查快取
+            if post_id in self.article_cache:
+                return self.article_cache[post_id]
+                
+            # 查詢資料庫
+            article = await self.db.articles.find_one({"post_id": post_id})
+            
+            # 更新快取
+            if article:
+                self.article_cache[post_id] = article
+                
+            return article
+            
+        except Exception as e:
+            self.logger.error(f"獲取文章時發生錯誤：{str(e)}")
+            raise DatabaseError(f"獲取文章失敗：{str(e)}")
+            
+    async def count_articles_between(self, start_time: datetime, end_time: datetime) -> int:
+        """計算指定時間範圍內的文章數量
+        
+        Args:
+            start_time: 開始時間
+            end_time: 結束時間
+            
+        Returns:
+            int: 文章數量
+        """
+        try:
+            count = await self.db.articles.count_documents({
+                "created_at": {
+                    "$gte": start_time,
+                    "$lt": end_time
+                }
+            })
+            return count
+        except Exception as e:
+            self.logger.error(f"計算文章數量時發生錯誤：{str(e)}")
+            raise DatabaseError(f"計算文章數量失敗：{str(e)}")
+            
+    async def delete_oldest_articles(self, count: int) -> int:
+        """刪除最舊的文章
+        
+        Args:
+            count: 要刪除的文章數量
+            
+        Returns:
+            int: 實際刪除的文章數量
+        """
+        try:
+            # 獲取最舊的文章
+            cursor = self.db.articles.find().sort("created_at", 1).limit(count)
+            deleted_count = 0
+            
+            async for article in cursor:
+                # 從資料庫中刪除
+                result = await self.db.articles.delete_one({"_id": article["_id"]})
+                if result.deleted_count > 0:
+                    # 從快取中刪除
+                    if article["post_id"] in self.article_cache:
+                        del self.article_cache[article["post_id"]]
+                    deleted_count += 1
+                    
+            return deleted_count
+            
+        except Exception as e:
+            self.logger.error(f"刪除文章時發生錯誤：{str(e)}")
+            raise DatabaseError(f"刪除文章失敗：{str(e)}")
+            
+    async def get_user_history(self, user_id: str) -> Dict[str, Any]:
+        """獲取用戶歷史記錄
         
         Args:
             user_id: 用戶 ID
-            limit: 返回的記錄數量
             
         Returns:
-            List[Dict[str, Any]]: 互動歷史列表
+            Dict[str, Any]: 用戶歷史記錄
         """
         try:
-            cursor = self.db.interactions.find(
-                {"user_id": user_id}
-            ).sort("timestamp", -1).limit(limit)
-            
-            return await cursor.to_list(length=None)
-            
+            history = await self.db.user_history.find_one({"user_id": user_id})
+            return history or {"conversations": []}
         except Exception as e:
-            self.logger.error(f"獲取用戶互動歷史時發生錯誤：{str(e)}")
-            raise DatabaseError(f"獲取用戶互動歷史失敗：{str(e)}")
+            self.logger.error(f"獲取用戶歷史記錄時發生錯誤：{str(e)}")
+            raise DatabaseError(f"獲取用戶歷史記錄失敗：{str(e)}")
             
-    async def save_user_interaction(self, interaction: Dict[str, Any]):
-        """儲存用戶互動
+    async def save_user_history(self, user_id: str, history: Dict[str, Any]):
+        """儲存用戶歷史記錄
         
         Args:
-            interaction: 互動資訊
+            user_id: 用戶 ID
+            history: 歷史記錄
         """
         try:
-            await self.db.interactions.insert_one(interaction)
-            self.logger.info(f"用戶互動儲存成功：{interaction['user_id']}")
-            
+            await self.db.user_history.update_one(
+                {"user_id": user_id},
+                {"$set": history},
+                upsert=True
+            )
+            self.logger.info(f"用戶歷史記錄儲存成功：{user_id}")
         except Exception as e:
-            self.logger.error(f"儲存用戶互動時發生錯誤：{str(e)}")
-            raise DatabaseError(f"儲存用戶互動失敗：{str(e)}")
-            
-    async def get_mood_history(self, days: int = 7) -> List[Dict[str, Any]]:
-        """獲取情緒歷史
-        
-        Args:
-            days: 要查詢的天數
-            
-        Returns:
-            List[Dict[str, Any]]: 情緒歷史列表
-        """
-        try:
-            # 計算時間範圍
-            now = datetime.now(pytz.UTC)
-            start_date = now - timedelta(days=days)
-            
-            cursor = self.db.moods.find({
-                "timestamp": {
-                    "$gte": start_date,
-                    "$lt": now
-                }
-            }).sort("timestamp", -1)
-            
-            return await cursor.to_list(length=None)
-            
-        except Exception as e:
-            self.logger.error(f"獲取情緒歷史時發生錯誤：{str(e)}")
-            raise DatabaseError(f"獲取情緒歷史失敗：{str(e)}")
-            
-    async def save_mood(self, mood: Dict[str, Any]):
-        """儲存情緒記錄
-        
-        Args:
-            mood: 情緒資訊
-        """
-        try:
-            await self.db.moods.insert_one(mood)
-            self.logger.info("情緒記錄儲存成功")
-            
-        except Exception as e:
-            self.logger.error(f"儲存情緒記錄時發生錯誤：{str(e)}")
-            raise DatabaseError(f"儲存情緒記錄失敗：{str(e)}")
+            self.logger.error(f"儲存用戶歷史記錄時發生錯誤：{str(e)}")
+            raise DatabaseError(f"儲存用戶歷史記錄失敗：{str(e)}")

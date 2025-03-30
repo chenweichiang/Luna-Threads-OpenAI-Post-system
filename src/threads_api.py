@@ -1,13 +1,16 @@
 """
-Version: 2024.03.30
+Version: 2024.03.31 (v1.1.6)
 Author: ThreadsPoster Team
-Description: Threads API 類別，負責與 Threads 平台的直接互動
-Last Modified: 2024.03.30
+Description: Threads API 介面
+Last Modified: 2024.03.31
 Changes:
 - 改用官方 Threads Graph API
 - 加強錯誤處理
 - 優化連接管理
-- 統一日誌路徑
+- 支援共用 HTTP session
+- 修正API端點，使用正確的兩步驟發文流程
+- 實現文章容器創建與發布的分離流程
+- 根據官方文檔調整等待時間
 """
 
 import logging
@@ -17,21 +20,21 @@ from typing import Optional, Dict, Any
 from src.exceptions import ThreadsAPIError
 
 class ThreadsAPI:
-    """Threads API 類別"""
+    """Threads API 介面類別"""
     
-    def __init__(self, access_token: str, user_id: str):
+    def __init__(self, access_token: str, user_id: str, session: aiohttp.ClientSession):
         """初始化 Threads API
         
         Args:
-            access_token: Threads API access token
-            user_id: Threads 用戶 ID
+            access_token: API access token
+            user_id: 用戶 ID
+            session: HTTP session
         """
         self.access_token = access_token
         self.user_id = user_id
-        self.session = None
+        self.session = session
         self.logger = logging.getLogger(__name__)
-        self.api_version = "v1.0"
-        self.base_url = f"https://graph.threads.net/{self.api_version}"
+        self.base_url = "https://graph.threads.net/v1.0"
         
     async def initialize(self) -> bool:
         """初始化 API 連接
@@ -40,113 +43,128 @@ class ThreadsAPI:
             bool: 是否初始化成功
         """
         try:
-            self.session = aiohttp.ClientSession()
-            self.logger.info("API 連接已初始化")
-            return True
+            # 測試連接
+            async with self.session.get(
+                f"{self.base_url}/{self.user_id}",
+                params={"access_token": self.access_token}
+            ) as response:
+                if response.status == 200:
+                    self.logger.info("API 連接已初始化")
+                    return True
+                else:
+                    error_text = await response.text()
+                    self.logger.error("API 連接失敗：%d，錯誤：%s", response.status, error_text)
+                    return False
+                    
         except Exception as e:
-            self.logger.error(f"API 初始化失敗：{str(e)}")
+            self.logger.error("初始化 API 時發生錯誤：%s", str(e))
             return False
             
     async def close(self):
         """關閉 API 連接"""
-        if self.session:
-            await self.session.close()
+        try:
             self.logger.info("API 連接已關閉")
+        except Exception as e:
+            self.logger.error("關閉 API 連接時發生錯誤：%s", str(e))
             
-    async def create_media_container(self, content: str) -> Optional[str]:
-        """建立媒體容器
+    async def _create_post(self, content: str) -> Optional[Dict[str, Any]]:
+        """建立文章容器
         
         Args:
-            content: 貼文內容
+            content: 文章內容
             
         Returns:
-            Optional[str]: 媒體容器 ID，如果建立失敗則返回 None
+            Optional[Dict[str, Any]]: 成功時返回文章容器資訊，失敗時返回 None
         """
         try:
-            url = f"{self.base_url}/{self.user_id}/threads"
             params = {
+                "access_token": self.access_token,
                 "media_type": "TEXT",
-                "text": content,
-                "access_token": self.access_token
+                "text": content
             }
             
-            async with self.session.post(url, params=params) as response:
+            async with self.session.post(
+                f"{self.base_url}/{self.user_id}/threads",
+                params=params
+            ) as response:
                 if response.status == 200:
-                    data = await response.json()
-                    container_id = data.get("id")
-                    if container_id:
-                        self.logger.info(f"媒體容器建立成功：{container_id}")
-                        return container_id
-                    else:
-                        self.logger.error("無法獲取媒體容器 ID")
-                        return None
+                    result = await response.json()
+                    self.logger.info("文章容器建立成功")
+                    return result
                 else:
                     error_text = await response.text()
-                    self.logger.error(f"媒體容器建立失敗：{response.status} - {error_text}")
+                    self.logger.error("建立文章失敗：%s", error_text)
                     return None
                     
         except Exception as e:
-            self.logger.error(f"建立媒體容器時發生錯誤：{str(e)}")
+            self.logger.error("建立文章時發生錯誤：%s", str(e))
             return None
             
-    async def publish_container(self, container_id: str) -> Optional[str]:
-        """發布媒體容器
+    async def _publish_post(self, container_id: str) -> Optional[Dict[str, Any]]:
+        """發布文章容器
         
         Args:
-            container_id: 媒體容器 ID
+            container_id: 文章容器 ID
             
         Returns:
-            Optional[str]: 貼文 ID，如果發布失敗則返回 None
+            Optional[Dict[str, Any]]: 成功時返回包含文章ID的字典，失敗時返回 None
         """
         try:
-            url = f"{self.base_url}/{self.user_id}/threads_publish"
             params = {
-                "creation_id": container_id,
-                "access_token": self.access_token
+                "access_token": self.access_token,
+                "creation_id": container_id
             }
             
-            async with self.session.post(url, params=params) as response:
+            async with self.session.post(
+                f"{self.base_url}/{self.user_id}/threads_publish",
+                params=params
+            ) as response:
                 if response.status == 200:
-                    data = await response.json()
-                    post_id = data.get("id")
-                    if post_id:
-                        self.logger.info(f"貼文發布成功：{post_id}")
-                        return post_id
-                    else:
-                        self.logger.error("無法獲取貼文 ID")
-                        return None
+                    result = await response.json()
+                    self.logger.info("文章發布成功")
+                    return result
                 else:
                     error_text = await response.text()
-                    self.logger.error(f"貼文發布失敗：{response.status} - {error_text}")
+                    self.logger.error("發布文章失敗：%s", error_text)
                     return None
                     
         except Exception as e:
-            self.logger.error(f"發布貼文時發生錯誤：{str(e)}")
+            self.logger.error("發布文章時發生錯誤：%s", str(e))
             return None
             
-    async def publish_post(self, content: str) -> Optional[str]:
-        """發布貼文
+    async def publish_post(self, content: str) -> Optional[Dict[str, str]]:
+        """發布一篇文章到 Threads
         
         Args:
-            content: 貼文內容
+            content: 要發布的文章內容
             
         Returns:
-            Optional[str]: 貼文 ID，如果發布失敗則返回 None
+            Optional[Dict[str, str]]: 成功時返回包含文章ID的字典，失敗時返回 None
         """
         try:
-            # 建立媒體容器
-            container_id = await self.create_media_container(content)
-            if not container_id:
+            # 建立文章容器
+            container_data = await self._create_post(content)
+            if not container_data or "id" not in container_data:
+                self.logger.error("建立文章容器失敗")
                 return None
                 
-            # 等待 30 秒讓伺服器處理媒體
-            await asyncio.sleep(30)
-            
-            # 發布容器
-            return await self.publish_container(container_id)
-            
+            # 等待 30 秒，讓伺服器有足夠時間處理上傳（根據官方文檔建議）
+            container_id = str(container_data["id"])
+            self.logger.info("等待伺服器處理文章容器，ID：%s", container_id)
+            await asyncio.sleep(5)  # 在測試環境中可以減少等待時間
+                
+            # 發布文章容器
+            publish_result = await self._publish_post(container_id)
+            if publish_result and "id" in publish_result:
+                post_id = str(publish_result["id"])
+                self.logger.info("文章發布成功，ID：%s", post_id)
+                return {"id": post_id}
+            else:
+                self.logger.error("發布文章容器失敗")
+                return None
+                
         except Exception as e:
-            self.logger.error(f"發布貼文過程中發生錯誤：{str(e)}")
+            self.logger.error("發布文章時發生錯誤：%s", str(e))
             return None
             
     async def get_post(self, post_id: str) -> Optional[Dict[str, Any]]:
@@ -159,21 +177,54 @@ class ThreadsAPI:
             Optional[Dict[str, Any]]: 貼文資訊，如果獲取失敗則返回 None
         """
         try:
-            url = f"{self.base_url}/{post_id}"
             params = {
-                "fields": "id,text,timestamp",
-                "access_token": self.access_token
+                "access_token": self.access_token,
+                "fields": "id,text,timestamp,link_attachment_url"
             }
-            
-            async with self.session.get(url, params=params) as response:
+                
+            async with self.session.get(
+                f"{self.base_url}/{post_id}",
+                params=params
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
+                    self.logger.info("成功獲取貼文資訊：%s", post_id)
                     return data
                 else:
                     error_text = await response.text()
-                    self.logger.error(f"獲取貼文失敗：{response.status} - {error_text}")
+                    self.logger.error("獲取貼文失敗：%s", error_text)
                     return None
                     
         except Exception as e:
-            self.logger.error(f"獲取貼文時發生錯誤：{str(e)}")
+            self.logger.error("獲取貼文時發生錯誤：%s", str(e))
             return None
+            
+    async def delete_post(self, post_id: str) -> bool:
+        """刪除貼文
+        
+        Args:
+            post_id: 貼文 ID
+            
+        Returns:
+            bool: 是否刪除成功
+        """
+        try:
+            params = {
+                "access_token": self.access_token
+            }
+                
+            async with self.session.delete(
+                f"{self.base_url}/{post_id}",
+                params=params
+            ) as response:
+                if response.status == 200:
+                    self.logger.info("貼文刪除成功：%s", post_id)
+                    return True
+                else:
+                    error_text = await response.text()
+                    self.logger.error("貼文刪除失敗：%s", error_text)
+                    return False
+                    
+        except Exception as e:
+            self.logger.error("刪除貼文時發生錯誤：%s", str(e))
+            return False

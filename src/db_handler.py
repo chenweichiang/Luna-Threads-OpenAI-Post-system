@@ -1,13 +1,17 @@
 """
-Version: 2024.03.30
+Version: 2024.03.31 (v1.1.6)
 Author: ThreadsPoster Team
-Description: 資料庫處理器，負責管理與資料庫的所有互動
-Last Modified: 2024.03.30
+Description: 資料庫處理器類別，負責處理所有資料庫操作
+Last Modified: 2024.03.31
 Changes:
-- 優化資料庫連接池
-- 改進查詢效能
+- 實現基本資料庫處理功能
 - 加強錯誤處理
-- 統一日誌路徑
+- 優化資料庫查詢
+- 加入人設記憶系統
+- 改進資料庫連接管理
+- 新增資料庫索引優化
+- 加強資料完整性檢查
+- 改進文章儲存流程
 """
 
 import logging
@@ -44,7 +48,7 @@ class DatabaseHandler:
             
     async def close(self):
         """關閉資料庫連接"""
-        if self.database:
+        if self.database is not None:
             await self.database.close()
             self.logger.info("資料庫連接已關閉")
             

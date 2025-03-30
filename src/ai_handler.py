@@ -1,17 +1,16 @@
 """
-Version: 2024.03.30
+Version: 2024.03.31 (v1.1.6)
 Author: ThreadsPoster Team
-Description: AI 處理器，負責管理 Luna 的人設、對話生成和情感分析
-Last Modified: 2024.03.30
-Changes: 
-- 優化情感分析系統
-- 改進內容生成邏輯
-- 加強人設記憶整合
-- 優化 token 使用量記錄
-- 改進日誌路徑設定
-- 加入記憶體快取機制
-- 優化 API 調用
-- 改進內容生成效能
+Description: AI 處理器類別，負責管理 OpenAI API 的互動以及內容生成
+Last Modified: 2024.03.31
+Changes:
+- 改進 OpenAI API 整合
+- 加強錯誤處理
+- 優化 token 使用
+- 加入情感分析功能
+- 改進人設記憶存取
+- 提高生成內容的連貫性
+- 加強角色特性表現
 """
 
 import logging
@@ -30,6 +29,7 @@ import os
 import re
 from cachetools import TTLCache
 import hashlib
+import aiohttp
 
 # 設定 token 使用量的 logger
 token_logger = logging.getLogger('token_usage')
@@ -85,13 +85,16 @@ class AIError(Exception):
 
 class AIHandler:
     """AI 處理器"""
-    def __init__(self, config):
+    def __init__(self, config: Config, session: Optional[aiohttp.ClientSession] = None):
         """初始化 AI 處理器
         
         Args:
             config: 設定物件
+            session: 可選的共用 HTTP session
         """
         self.config = config
+        self.session = session
+        self._own_session = session is None
         self.logger = logging.getLogger(__name__)
         self.timezone = pytz.timezone("Asia/Taipei")
         self.openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
@@ -113,6 +116,9 @@ class AIHandler:
             db: Database 實例
         """
         try:
+            if not self.session and self._own_session:
+                self.session = aiohttp.ClientSession()
+            
             self.db = db
             
             # 檢查基礎人設是否存在
@@ -135,14 +141,22 @@ class AIHandler:
             
             self.logger.info("人設記憶初始化完成")
             
+            return True
+            
         except Exception as e:
             self.logger.error(f"初始化人設記憶時發生錯誤：{str(e)}")
-            raise
+            return False
 
     async def close(self):
         """關閉 AI 處理器"""
-        if hasattr(self, 'openai_client'):
-            await self.openai_client.close()
+        try:
+            if self._own_session and self.session:
+                await self.session.close()
+            if hasattr(self, 'openai_client'):
+                await self.openai_client.close()
+            self.logger.info("AI 處理器已關閉")
+        except Exception as e:
+            self.logger.error(f"關閉 AI 處理器時發生錯誤：{str(e)}")
 
     async def _is_complete_sentence(self, text: str) -> bool:
         """檢查是否為完整句子
@@ -741,7 +755,18 @@ class AIHandler:
             return "深夜"
 
     async def _generate_prompt(self, topics: List[str], mood: str, style: str) -> str:
-        """生成提示詞"""
+        """生成提示詞
+        
+        Args:
+            topics: 主題列表
+            mood: 當前心情
+            style: 表達風格
+            
+        Returns:
+            str: 生成的提示詞
+        """
+        time_period = self._get_current_time_period()
+        
         return f"""你是一個名叫Luna的虛擬角色，請以她的身份生成一篇簡短的Threads貼文。
 
 要求：
@@ -749,33 +774,13 @@ class AIHandler:
    - 每次只生成一句話
    - 字數限制在20-100字之間
    - 必須包含1-2個表情符號
-   - 必須以下列開頭之一：
-     * 欸
-     * 啊
-     * 咦
-     * 哇
-     * 唔
-     * 呼
-     * 天啊
-     * 不會吧
-     * 我的天
-     * 嘿嘿
-     * 大家好
-     * Hey
-     * 哇哦
+   - 必須以下列開頭之一：欸、啊、咦、哇、唔、呼、天啊、不會吧、我的天、嘿嘿、大家好、Hey、哇哦
    
 2. 結尾要求：
-   - 必須用以下符號之一結尾：
-     * ！
-     * 。
-     * ？
-     * ～
+   - 必須用以下符號之一結尾：！。？～
 
-3. 表情符號使用規則：
-   - 配合文字內容選擇合適的表情
-   - 一句話使用1-2個表情
-   - 可用的表情：
-     * 🎨🎭🎬💕💖💫💭💡🙈✨😊🎮🎵❤️😓
+3. 表情符號：
+   - 配合文字內容選擇1-2個表情：🎨🎭🎬💕💖💫💭💡🙈✨😊🎮🎵❤️😓
 
 4. 禁止事項：
    - 不要使用多句話
@@ -784,7 +789,7 @@ class AIHandler:
    - 不要使用過於生硬的轉折
 
 當前情境：
-- 時間：{self._get_current_time_period()}
+- 時間：{time_period}
 - 心情：{mood}
 - 風格：{style}
 - 主題：{', '.join(topics)}
@@ -954,140 +959,90 @@ class AIHandler:
             self.logger.error(f"生成內容時發生錯誤：{str(e)}")
             return f"{context['mood']}的心情，{context['style']}地想著{random.choice(context['topics'])} ✨"  # 使用安全的預設內容
 
-    async def generate_content(self) -> Tuple[str, List[str], Dict[str, float]]:
-        """生成發文內容
+    async def generate_content(self) -> Optional[str]:
+        """生成一篇貼文內容
         
         Returns:
-            Tuple[str, List[str], Dict[str, float]]: 
-                - 生成的內容
-                - 檢測到的主題列表
-                - 情感分析結果
+            Optional[str]: 生成的內容，如果生成失敗則返回 None
         """
         try:
-            max_retries = 3
-            retry_count = 0
+            # 獲取當前時間和心情
+            current_time = datetime.now(self.timezone)
+            current_hour = current_time.hour
+            mood = await self._get_current_mood()
+            style = mood.get("style", "一般")
             
-            while retry_count < max_retries:
+            # 從嵌套字典中獲取所有關鍵字
+            all_keywords = []
+            for category_keywords in self.keywords.values():
+                all_keywords.extend(category_keywords)
+            
+            # 選擇主題並記錄
+            num_topics = min(3, len(all_keywords))
+            topics = random.sample(all_keywords, k=num_topics) if all_keywords else ["日常"]
+            
+            self.logger.info(f"當前時間：{current_hour}點，心情：{mood['mood']}，風格：{style}")
+            self.logger.info(f"選擇的主題：{', '.join(topics)}")
+            
+            # 最多重試 3 次
+            for attempt in range(3):
                 try:
-                    # 獲取當前上下文
-                    context = await self._get_current_context()
-                    self.logger.info(f"當前時間：{context['time']}時，心情：{context['mood']}，風格：{context['style']}")
-                    self.logger.info(f"選擇的主題：{context['topics']}")
-                    
-                    # 根據時間和主題決定場景
-                    current_hour = context['time']
-                    scene_context = 'social'  # 預設場景
-                    if any(topic in ['遊戲', '電玩'] for topic in context['topics']):
-                        scene_context = 'gaming'
-                    elif current_hour >= 22 or current_hour <= 5:
-                        scene_context = 'night'
-                    
-                    # 獲取對應場景的人設特徵
-                    personality = await self._get_luna_personality(scene_context)
-                    
-                    # 根據場景選擇合適的表情符號
-                    if scene_context == 'gaming':
-                        emojis = personality.get('遊戲模式', {}).get('表情', ['🎮', '💖', '🌟'])
-                    elif scene_context == 'night':
-                        emojis = personality.get('夜間模式', {}).get('表情', ['🌙', '💭', '🥺'])
-                    else:
-                        emojis = personality.get('社交模式', {}).get('表情', ['✨', '💕', '💫'])
-                    
                     # 生成提示詞
-                    prompt = await self._generate_prompt(
-                        context['topics'],
-                        context['mood'],
-                        context['style']
-                    )
-                    
-                    # 添加人設特徵到提示詞
-                    personality_prompt = f"""
-                    請使用以下特徵生成內容：
-                    - 說話風格：溫柔友善
-                    - 可用表情：{emojis}
-                    - 當前場景：{'遊戲直播中' if scene_context == 'gaming' else '深夜時分' if scene_context == 'night' else '日常社交'}
-                    """
+                    prompt = await self._generate_prompt(topics, mood["mood"], style)
                     
                     # 生成內容
-                    messages = [
-                        {"role": "system", "content": prompt},
-                        {"role": "user", "content": f"{personality_prompt}\n\n請根據以下條件生成一篇貼文：\n"
-                                                f"- 時間：{self._get_current_time_period()}\n"
-                                                f"- 心情：{context['mood']}\n"
-                                                f"- 風格：{context['style']}\n"
-                                                f"- 主題：{', '.join(context['topics'])}"}
-                    ]
-                    
-                    start_time = time.time()
                     response = await self.openai_client.chat.completions.create(
-                        model=self.config.OPENAI_MODEL,
-                        messages=messages,
-                        max_tokens=150,
-                        temperature=0.7 + (retry_count * 0.1)  # 每次重試增加一些隨機性
+                        model="gpt-4-turbo-preview",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.7 + (attempt * 0.1),  # 每次重試增加一些隨機性
+                        max_tokens=150
                     )
                     
-                    # 記錄 token 使用量
-                    await self._log_token_usage(response, start_time)
-                    
-                    content = response.choices[0].message.content.strip()
-                    self.logger.info(f"原始生成內容：{content}")
-                    
-                    # 檢查句子完整性
-                    if not await self._is_complete_sentence(content):
-                        retry_count += 1
-                        self.logger.warning(f"生成的句子不完整，進行第 {retry_count} 次重試")
-                        continue
-                    
-                    # 清理內容
-                    cleaned_content = await self._clean_content(content)
-                    if not cleaned_content:
-                        retry_count += 1
-                        self.logger.warning(f"內容清理後為空，進行第 {retry_count} 次重試")
-                        continue
-                    
-                    self.logger.info(f"清理後內容：{cleaned_content}")
-                    
-                    # 檢測主題
-                    topics = self._detect_topics(cleaned_content)
-                    if not topics:
-                        retry_count += 1
-                        self.logger.warning(f"未檢測到主題，進行第 {retry_count} 次重試")
-                        continue
-                    
-                    self.logger.info(f"檢測到的主題：{topics}")
-                    
-                    # 情感分析
-                    sentiment = await self._analyze_sentiment(cleaned_content)
-                    self.logger.info(f"情感分析：{sentiment}")
-                    
-                    # 驗證情感是否符合要求
-                    if not self._validate_sentiment(sentiment, context["mood"]):
-                        retry_count += 1
-                        self.logger.warning(f"情感驗證失敗，進行第 {retry_count} 次重試")
-                        continue
-                    
-                    # 記錄互動
-                    await self.add_interaction(
-                        "system",
-                        f"生成內容，主題：{topics}，心情：{context['mood']}",
-                        cleaned_content
-                    )
-                    
-                    self.logger.info(f"成功生成內容：{cleaned_content}")
-                    return cleaned_content, topics, sentiment
+                    # 清理並驗證內容
+                    content = await self._clean_content(response.choices[0].message.content)
+                    if content and await self._is_complete_sentence(content):
+                        return content
+                        
+                    self.logger.warning(f"第 {attempt + 1} 次生成的內容不完整或無效，重試中...")
                     
                 except Exception as e:
-                    self.logger.error(f"生成內容時發生錯誤：{str(e)}")
-                    retry_count += 1
-                    if retry_count >= max_retries:
+                    self.logger.error(f"第 {attempt + 1} 次生成內容時發生錯誤：{str(e)}")
+                    if attempt == 2:  # 最後一次嘗試失敗
                         raise
-            
-            self.logger.warning("已達到最大重試次數，生成失敗")
-            return None, [], {}
+                    continue
+                
+            return None
             
         except Exception as e:
-            self.logger.error(f"生成內容時發生嚴重錯誤：{str(e)}")
-            return None, [], {}
+            self.logger.error(f"生成內容時發生錯誤：{str(e)}")
+            return None
+
+    async def analyze_sentiment(self, content: str) -> Dict[str, float]:
+        """分析文本情感
+        
+        Args:
+            content: 要分析的文本
+            
+        Returns:
+            Dict[str, float]: 情感分析結果
+        """
+        try:
+            # 檢查快取
+            cache_key = hashlib.md5(content.encode()).hexdigest()
+            if cache_key in self._sentiment_cache:
+                return self._sentiment_cache[cache_key]
+                
+            # 進行情感分析
+            sentiment = await self._analyze_sentiment(content)
+            
+            # 儲存到快取
+            self._sentiment_cache[cache_key] = sentiment
+            
+            return sentiment
+            
+        except Exception as e:
+            self.logger.error(f"分析情感時發生錯誤：{str(e)}")
+            return {"positive": 0.0, "neutral": 100.0, "negative": 0.0}
 
     async def _get_luna_personality(self, context: str = None) -> Dict[str, Any]:
         """獲取Luna的人設特徵，根據不同場景返回相應的性格特徵
