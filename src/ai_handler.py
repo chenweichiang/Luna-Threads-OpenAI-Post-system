@@ -85,41 +85,77 @@ class AIError(Exception):
 
 class AIHandler:
     """AI 處理器"""
-    def __init__(self, config: Config, session: Optional[aiohttp.ClientSession] = None):
+    def __init__(self, api_key: str, session: aiohttp.ClientSession, db = None):
         """初始化 AI 處理器
         
         Args:
-            config: 設定物件
-            session: 可選的共用 HTTP session
+            api_key: OpenAI API 金鑰
+            session: HTTP session
+            db: 可選的資料庫處理器實例
         """
-        self.config = config
+        self.api_key = api_key
         self.session = session
-        self._own_session = session is None
+        self.db = db
         self.logger = logging.getLogger(__name__)
         self.timezone = pytz.timezone("Asia/Taipei")
-        self.openai_client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
-        self.keywords = config.KEYWORDS
-        self.sentiment_dict = config.SENTIMENT_WORDS
+        self.openai_client = AsyncOpenAI(api_key=api_key)
         self.total_tokens = total_tokens
         self.request_count = request_count
-        self.db = None  # 資料庫連接會在 initialize 中設定
         
         # 初始化快取
         self._personality_cache = TTLCache(maxsize=CACHE_MAXSIZE, ttl=PERSONALITY_CACHE_TTL)
         self._sentiment_cache = TTLCache(maxsize=CACHE_MAXSIZE, ttl=SENTIMENT_CACHE_TTL)
         self._context_cache = TTLCache(maxsize=CACHE_MAXSIZE, ttl=300)
-
-    async def initialize(self, db):
-        """初始化 AI 處理器的資料庫連接和人設記憶
         
-        Args:
-            db: Database 實例
-        """
+        # 設定關鍵詞和情感詞典
+        self.keywords = {
+            "科技": [
+                "新科技", "AI", "程式設計", "遊戲開發", "手機", "電腦", "智慧家電",
+                "科技新聞", "程式", "coding", "開發", "軟體", "硬體", "技術"
+            ],
+            "動漫": [
+                "動畫", "漫畫", "輕小說", "Cosplay", "同人創作", "聲優",
+                "二次元", "動漫", "アニメ", "コスプレ", "同人誌", "漫展"
+            ],
+            "遊戲": [
+                "電玩", "手遊", "主機遊戲", "遊戲實況", "電競", "RPG",
+                "策略遊戲", "解謎遊戲", "音樂遊戲", "格鬥遊戲", "開放世界"
+            ],
+            "生活": [
+                "美食", "旅遊", "時尚", "音樂", "電影", "寵物", "攝影",
+                "咖啡", "下午茶", "美妝", "穿搭", "健身", "運動"
+            ],
+            "心情": [
+                "工作", "學習", "戀愛", "友情", "家庭", "夢想", "目標",
+                "心情", "感受", "情緒", "想法", "生活", "日常"
+            ]
+        }
+        
+        self.sentiment_dict = {
+            "正面": [
+                "開心", "興奮", "期待", "喜歡", "讚賞", "感動", "溫暖", "愉快", "滿意",
+                "好棒", "太棒", "超棒", "厲害", "amazing", "溫馨", "可愛", "美", "精彩",
+                "享受", "舒服", "順手", "方便", "貼心", "實用", "棒", "讚", "喜愛",
+                "期待", "驚喜", "幸福", "快樂", "甜蜜", "療癒", "放鬆", "愛"
+            ],
+            "中性": [
+                "理解", "思考", "觀察", "好奇", "平靜", "普通", "一般", "還好",
+                "正常", "習慣", "知道", "了解", "覺得", "認為", "想", "猜",
+                "可能", "也許", "或許", "應該", "大概", "差不多"
+            ],
+            "負面": [
+                "生氣", "難過", "失望", "煩惱", "焦慮", "疲倦", "無聊", "不滿",
+                "討厭", "糟糕", "可惡", "麻煩", "困擾", "痛苦", "悲傷", "憤怒",
+                "厭煩", "煩躁", "不爽", "不開心", "不好", "不行", "不可以"
+            ]
+        }
+
+    async def initialize(self):
+        """初始化 AI 處理器的資料庫連接和人設記憶"""
         try:
-            if not self.session and self._own_session:
-                self.session = aiohttp.ClientSession()
-            
-            self.db = db
+            if not self.db:
+                self.logger.warning("資料庫處理器未設定，部分功能可能受限")
+                return True
             
             # 檢查基礎人設是否存在
             base_memory = await self.db.get_personality_memory('base')
@@ -150,8 +186,6 @@ class AIHandler:
     async def close(self):
         """關閉 AI 處理器"""
         try:
-            if self._own_session and self.session:
-                await self.session.close()
             if hasattr(self, 'openai_client'):
                 await self.openai_client.close()
             self.logger.info("AI 處理器已關閉")

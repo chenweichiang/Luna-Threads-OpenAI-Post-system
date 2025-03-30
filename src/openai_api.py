@@ -1,12 +1,14 @@
 """
-Version: 2024.03.30
+Version: 2024.03.31 (v1.1.6)
 Author: ThreadsPoster Team
 Description: OpenAI API 介面，處理與 OpenAI 服務的所有互動
-Last Modified: 2024.03.30
+Last Modified: 2024.03.31
 Changes:
 - 升級至最新的 OpenAI API
 - 優化提示詞處理
 - 加強錯誤處理機制
+- 支援接受外部 session
+- 整合性能監控
 """
 
 import logging
@@ -19,22 +21,24 @@ from functools import lru_cache
 import backoff
 from aiohttp import ClientTimeout
 from asyncio import Semaphore
+from src.performance_monitor import performance_monitor, track_performance
 
 logger = logging.getLogger(__name__)
 
 class OpenAIAPI:
     """OpenAI API 處理類"""
     
-    def __init__(self, config):
+    def __init__(self, api_key: str, session: Optional[aiohttp.ClientSession] = None):
         """初始化 OpenAI API 客戶端
         
         Args:
-            config: 設定物件
+            api_key: OpenAI API 金鑰
+            session: 可選的 HTTP session，如果提供則使用此 session
         """
-        self.config = config
-        self.api_key = config.OPENAI_API_KEY
-        self.model = config.OPENAI_MODEL
+        self.api_key = api_key
+        self.model = "gpt-4-turbo-preview"  # 預設模型
         self.timezone = pytz.timezone("Asia/Taipei")
+        self.performance_monitor = performance_monitor
         
         # 設置 API 請求的基本配置
         self.headers = {
@@ -42,8 +46,9 @@ class OpenAIAPI:
             "Content-Type": "application/json"
         }
         
-        # 建立共用的 session
-        self.session = None
+        # 使用提供的 session 或建立新的
+        self.session = session
+        self.own_session = session is None  # 標記是否為自己建立的 session
         
         # 並發控制
         self.semaphore = Semaphore(5)  # 限制最大並發請求數
@@ -67,19 +72,74 @@ class OpenAIAPI:
                     use_dns_cache=True
                 )
             )
-    
+            self.own_session = True
+
     @lru_cache(maxsize=24)
     def _get_base_prompt(self, current_hour: int) -> str:
         """獲取基本提示詞（使用快取）"""
-        mood_pattern = self.config.get_mood_pattern(current_hour)
-        character_config = self.config.CHARACTER_CONFIG
+        # 定義基於時間的心情模式
+        mood_patterns = {
+            "morning": {
+                "mood": "精神飽滿",
+                "topics": ["早安", "今天的計畫"],
+                "style": "活力充沛"
+            },
+            "noon": {
+                "mood": "悠閒放鬆",
+                "topics": ["午餐", "休息", "工作"],
+                "style": "輕鬆愉快"
+            },
+            "afternoon": {
+                "mood": "專注認真",
+                "topics": ["工作", "興趣", "學習"],
+                "style": "認真思考"
+            },
+            "evening": {
+                "mood": "放鬆愉快",
+                "topics": ["晚餐", "娛樂", "心情"],
+                "style": "溫柔體貼"
+            },
+            "night": {
+                "mood": "安靜思考",
+                "topics": ["星空", "音樂", "夢想"],
+                "style": "溫柔安靜"
+            }
+        }
         
-        return f"""你是一個 {character_config['基本資料']['年齡']} 歲的{character_config['基本資料']['國籍']}{character_config['基本資料']['性別']}。
+        # 確定當前時間段
+        if 5 <= current_hour < 11:
+            time_period = "morning"
+        elif 11 <= current_hour < 14:
+            time_period = "noon"
+        elif 14 <= current_hour < 18:
+            time_period = "afternoon"
+        elif 18 <= current_hour < 22:
+            time_period = "evening"
+        else:
+            time_period = "night"
+            
+        mood_pattern = mood_patterns[time_period]
+        
+        # 定義基本資料
+        character_data = {
+            "年齡": 20,
+            "性別": "女性",
+            "國籍": "台灣",
+            "興趣": ["遊戲", "動漫", "收藏公仔"],
+            "個性特徵": [
+                "善良溫柔",
+                "容易感到寂寞",
+                "喜歡交朋友"
+            ]
+        }
+        
+        return f"""你是一個 {character_data['年齡']} 歲的{character_data['國籍']}{character_data['性別']}。
 當前心情：{mood_pattern['mood']}
 說話風格：{mood_pattern['style']}
-興趣：{', '.join(character_config['基本資料']['興趣'])}
-個性特徵：{', '.join(character_config['基本資料']['個性特徵'])}"""
+興趣：{', '.join(character_data['興趣'])}
+個性特徵：{', '.join(character_data['個性特徵'])}"""
     
+    @track_performance("openai_api_request")
     @backoff.on_exception(
         backoff.expo,
         (aiohttp.ClientError, asyncio.TimeoutError),
@@ -90,10 +150,13 @@ class OpenAIAPI:
         """發送 API 請求（包含重試機制）"""
         async with self.semaphore:  # 控制並發
             try:
+                self.performance_monitor.start_operation("openai_api_call")
+                
                 await self.ensure_session()
                 
                 async with self.session.post(
                     "https://api.openai.com/v1/chat/completions",
+                    headers=self.headers,
                     json={
                         "model": self.model,
                         "messages": messages,
@@ -103,29 +166,62 @@ class OpenAIAPI:
                         "frequency_penalty": 0.5
                     }
                 ) as response:
+                    call_time = self.performance_monitor.end_operation("openai_api_call")
+                    
                     if response.status == 200:
                         data = await response.json()
-                        return data['choices'][0]['message']['content'].strip()
+                        content = data['choices'][0]['message']['content'].strip()
+                        
+                        # 估計 token 使用量
+                        total_tokens = sum(len(m["content"].split()) for m in messages) + len(content.split())
+                        
+                        # 記錄 API 使用情況
+                        self.performance_monitor.record_api_request(
+                            "openai", 
+                            success=True, 
+                            tokens=total_tokens,
+                            response_time=call_time
+                        )
+                        
+                        return content
                     elif response.status == 429:  # Rate limit
                         retry_after = int(response.headers.get('Retry-After', 5))
                         logger.warning(f"達到 API 限制，等待 {retry_after} 秒後重試")
+                        
+                        self.performance_monitor.record_api_request(
+                            "openai", 
+                            success=False,
+                            response_time=call_time
+                        )
+                        
                         await asyncio.sleep(retry_after)
                         raise aiohttp.ClientError("Rate limit exceeded")
                     else:
                         error_data = await response.text()
                         logger.error(f"OpenAI API 錯誤 {response.status}: {error_data}")
+                        
+                        self.performance_monitor.record_api_request(
+                            "openai", 
+                            success=False,
+                            response_time=call_time
+                        )
+                        
                         raise Exception(f"OpenAI API 錯誤: {response.status}")
                         
             except asyncio.TimeoutError:
                 logger.error("API 請求超時")
+                self.performance_monitor.record_api_request("openai", success=False)
                 raise
             except aiohttp.ClientError as e:
                 logger.error(f"API 請求失敗: {str(e)}")
+                self.performance_monitor.record_api_request("openai", success=False)
                 raise
             except Exception as e:
                 logger.error(f"未預期的錯誤: {str(e)}")
+                self.performance_monitor.record_api_request("openai", success=False)
                 raise
     
+    @track_performance("generate_post")
     async def generate_post(self) -> str:
         """生成貼文內容"""
         try:
@@ -143,6 +239,7 @@ class OpenAIAPI:
             logger.error(f"生成貼文內容時發生錯誤: {str(e)}")
             raise
     
+    @track_performance("generate_reply")
     async def generate_reply(self, user_message: str, username: str, conversation_history: Optional[List[Dict]] = None) -> str:
         """生成回覆內容"""
         try:
@@ -169,5 +266,5 @@ class OpenAIAPI:
             
     async def close(self):
         """關閉 session"""
-        if self.session and not self.session.closed:
+        if self.own_session and self.session and not self.session.closed:
             await self.session.close() 

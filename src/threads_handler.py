@@ -11,57 +11,61 @@ Changes:
 - 支援共用 HTTP session
 - 改進文章發布日誌記錄，顯示完整內容
 - 確保文章內容在日誌中正確顯示
+- 整合性能監控功能
 """
 
 import logging
+import asyncio
 from typing import Optional, Dict, Any
 import aiohttp
+import pytz
+from datetime import datetime
+
 from src.threads_api import ThreadsAPI
-from src.exceptions import ThreadsAPIError
-from datetime import datetime, timezone
+from src.performance_monitor import performance_monitor, track_performance
 
 class ThreadsHandler:
-    """Threads 處理器類別"""
+    """Threads 處理器類別，負責管理與 Threads 平台的互動"""
     
-    def __init__(self, access_token: str, user_id: str, database, session: aiohttp.ClientSession):
+    def __init__(self, api: ThreadsAPI, session: aiohttp.ClientSession):
         """初始化 Threads 處理器
         
         Args:
-            access_token: Threads API access token
-            user_id: Threads 用戶 ID
-            database: 資料庫處理器
-            session: HTTP session
+            api: ThreadsAPI 實例
+            session: HTTP 會話
         """
-        self.api = ThreadsAPI(access_token, user_id, session)
-        self.database = database
+        self.api = api
+        self.session = session
         self.logger = logging.getLogger(__name__)
-        self._session = session
+        self.timezone = pytz.timezone("Asia/Taipei")
+        self.performance_monitor = performance_monitor
         
     async def initialize(self) -> bool:
-        """初始化處理器
+        """初始化 Threads 處理器
         
         Returns:
-            bool: 是否初始化成功
+            bool: 初始化是否成功
         """
         try:
-            if await self.api.initialize():
+            result = await self.api.initialize()
+            if result:
                 self.logger.info("Threads 處理器初始化成功")
-                return True
             else:
                 self.logger.error("Threads 處理器初始化失敗")
-                return False
+            return result
         except Exception as e:
-            self.logger.error("初始化過程中發生錯誤：%s", str(e))
+            self.logger.error("初始化 Threads 處理器時發生錯誤：%s", str(e))
             return False
             
     async def close(self):
-        """關閉處理器"""
+        """關閉資源"""
         try:
             await self.api.close()
-            self.logger.info("Threads 處理器已關閉")
+            self.logger.info("Threads 處理器資源已關閉")
         except Exception as e:
-            self.logger.error("關閉處理器時發生錯誤：%s", str(e))
-        
+            self.logger.error("關閉 Threads 處理器資源時發生錯誤：%s", str(e))
+            
+    @track_performance("post_content")
     async def post_content(self, content: str) -> Optional[str]:
         """發布文章到 Threads
         
@@ -81,75 +85,93 @@ class ThreadsHandler:
                 return None
                 
             # 發布文章
+            self.performance_monitor.start_operation("threads_api_post")
             result = await self.api.publish_post(content)
+            post_time = self.performance_monitor.end_operation("threads_api_post")
+            
             if result is not None and "id" in result:
                 post_id = result["id"]
                 # 記錄完整文章內容
                 self.logger.info("發文成功：%s", content)
+                
+                # 記錄 API 使用
+                self.performance_monitor.record_api_request(
+                    "threads", 
+                    success=True, 
+                    response_time=post_time
+                )
+                
                 return post_id
                 
             self.logger.error("發文失敗：無法獲取文章ID")
+            self.performance_monitor.record_api_request("threads", success=False)
             return None
             
-        except ThreadsAPIError as e:
-            self.logger.error("Threads API 錯誤：%s", str(e))
-            return None
         except Exception as e:
-            self.logger.error("發文過程發生錯誤：%s", str(e))
+            self.logger.error("發文時發生錯誤：%s", str(e))
+            self.performance_monitor.record_api_request("threads", success=False)
             return None
             
+    @track_performance("get_post")
     async def get_post(self, post_id: str) -> Optional[Dict[str, Any]]:
-        """獲取貼文資訊
+        """獲取文章詳情
         
         Args:
-            post_id: 貼文 ID
+            post_id: 文章ID
             
         Returns:
-            Optional[Dict[str, Any]]: 貼文資訊，如果獲取失敗則返回 None
+            Optional[Dict[str, Any]]: 文章詳情
         """
         try:
-            # 先從資料庫查詢
-            post_data = await self.database.get_post(post_id)
-            if post_data is not None:
-                return post_data
+            self.performance_monitor.start_operation("threads_api_get")
+            result = await self.api.get_post(post_id)
+            get_time = self.performance_monitor.end_operation("threads_api_get")
+            
+            if result is not None:
+                self.performance_monitor.record_api_request(
+                    "threads", 
+                    success=True, 
+                    response_time=get_time
+                )
+                return result
                 
-            # 如果資料庫沒有，從 API 獲取
-            post_info = await self.api.get_post(post_id)
-            if post_info is not None:
-                self.logger.info("成功獲取貼文資訊：%s", post_id)
-                return post_info
-            else:
-                self.logger.error("獲取貼文資訊失敗：%s", post_id)
-                return None
-                
-        except ThreadsAPIError as e:
-            self.logger.error("Threads API 錯誤：%s", str(e))
-            return None
-        except Exception as e:
-            self.logger.error("獲取貼文資訊時發生錯誤：%s", str(e))
+            self.performance_monitor.record_api_request("threads", success=False)
             return None
             
+        except Exception as e:
+            self.logger.error("獲取文章詳情時發生錯誤：%s", str(e))
+            self.performance_monitor.record_api_request("threads", success=False)
+            return None
+            
+    @track_performance("delete_post")  
     async def delete_post(self, post_id: str) -> bool:
-        """刪除貼文
+        """刪除文章
         
         Args:
-            post_id: 貼文 ID
+            post_id: 文章ID
             
         Returns:
             bool: 是否刪除成功
         """
         try:
-            success = await self.api.delete_post(post_id)
-            if success:
-                self.logger.info("貼文刪除成功：%s", post_id)
+            self.performance_monitor.start_operation("threads_api_delete")
+            result = await self.api.delete_post(post_id)
+            delete_time = self.performance_monitor.end_operation("threads_api_delete")
+            
+            if result:
+                self.logger.info("刪除文章成功：%s", post_id)
+                self.performance_monitor.record_api_request(
+                    "threads", 
+                    success=True, 
+                    response_time=delete_time
+                )
                 return True
-            else:
-                self.logger.error("貼文刪除失敗：%s", post_id)
-                return False
                 
-        except ThreadsAPIError as e:
-            self.logger.error("Threads API 錯誤：%s", str(e))
+            self.logger.error("刪除文章失敗：%s", post_id)
+            self.performance_monitor.record_api_request("threads", success=False)
             return False
+            
         except Exception as e:
-            self.logger.error("刪除貼文時發生錯誤：%s", str(e))
+            self.logger.error("刪除文章時發生錯誤：%s", str(e))
+            self.performance_monitor.record_api_request("threads", success=False)
             return False 

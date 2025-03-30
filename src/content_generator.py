@@ -9,17 +9,23 @@ Changes:
 - 改進表情符號的使用方式，使其更自然
 - 新增後處理機制確保文章完整度
 - 改進互動性結尾的處理
+- 整合性能監控功能
+- 優化並行處理能力
+- 實現內容快取機制
 """
 
 import logging
 import json
 import random
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 import aiohttp
 import os
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 import pytz
 from src.exceptions import AIError, ContentGeneratorError
+from src.performance_monitor import performance_monitor, track_performance
+from cachetools import TTLCache
 
 class ContentGenerator:
     """內容生成器類別"""
@@ -38,6 +44,11 @@ class ContentGenerator:
         self.logger = logging.getLogger(__name__)
         self.model = "gpt-4-turbo-preview"
         self.timezone = pytz.timezone("Asia/Taipei")
+        self.performance_monitor = performance_monitor
+        
+        # 內容快取，用於避免短時間內生成重複內容
+        self.content_cache = TTLCache(maxsize=100, ttl=3600 * 24)  # 24小時快取
+        self.generation_lock = asyncio.Lock()  # 鎖，避免並發請求造成重複生成
         
         # 載入預設主題和提示詞
         self.topics = [
@@ -96,6 +107,7 @@ class ContentGenerator:
 
 重要提示：內容必須是完整的，不要在句子中間或想法表達一半時結束。確保最後一句話是一個完整的句子，並帶有適當的互動性結尾。"""
         
+    @track_performance("content_generator_initialize")
     async def initialize(self):
         """初始化設定"""
         try:
@@ -109,6 +121,7 @@ class ContentGenerator:
         """關閉資源"""
         self.logger.info("內容生成器資源已關閉")
         
+    @track_performance("content_generation")
     async def get_content(self) -> Optional[str]:
         """生成發文內容
         
@@ -116,9 +129,26 @@ class ContentGenerator:
             Optional[str]: 生成的內容，如果生成失敗則返回 None
         """
         try:
+            # 使用鎖確保在一個時間內只進行一次內容生成
+            async with self.generation_lock:
+                return await self._generate_content()
+        except Exception as e:
+            self.logger.error("內容生成過程中發生未知錯誤：%s", str(e))
+            return None
+    
+    async def _generate_content(self) -> Optional[str]:
+        """實際生成內容的方法"""
+        try:
             # 隨機選擇主題和提示詞
             topic = random.choice(self.topics)
             prompt = random.choice(self.prompts)
+            
+            # 檢查是否有快取的內容
+            cache_key = f"{topic}:{prompt}"
+            if cache_key in self.content_cache:
+                content = self.content_cache[cache_key]
+                self.logger.info("使用快取的內容 - 主題：%s，提示詞：%s", topic, prompt)
+                return content
             
             # 根據當前時間選擇適當的場景
             current_time = datetime.now(self.timezone)
@@ -133,10 +163,12 @@ class ContentGenerator:
                 context = random.choice(['base', 'social', 'gaming'])  # 日間隨機模式
                 
             # 獲取人設記憶
+            self.performance_monitor.start_operation("get_personality_memory")
             personality = await self.db.get_personality_memory(context)
             if not personality:
                 self.logger.warning(f"無法獲取{context}場景的人設記憶，使用基礎人設")
                 personality = await self.db.get_personality_memory('base')
+            self.performance_monitor.end_operation("get_personality_memory")
                 
             if not personality:
                 raise ContentGeneratorError(
@@ -185,6 +217,9 @@ class ContentGenerator:
                 }
             ]
             
+            # 記錄 API 請求
+            self.performance_monitor.start_operation("openai_api_request")
+            
             # 呼叫 OpenAI API
             async with self.session.post(
                 "https://api.openai.com/v1/chat/completions",
@@ -202,9 +237,22 @@ class ContentGenerator:
                     "presence_penalty": 0.5    # 增加主題變化
                 }
             ) as response:
+                response_time = self.performance_monitor.end_operation("openai_api_request")
+                
                 if response.status == 200:
                     data = await response.json()
                     content = data["choices"][0]["message"]["content"].strip()
+                    
+                    # 估計 token 使用量
+                    tokens_used = len(system_prompt.split()) + len(content.split())
+                    
+                    # 記錄 API 使用情況
+                    self.performance_monitor.record_api_request(
+                        "openai", 
+                        success=True, 
+                        tokens=tokens_used,
+                        response_time=response_time
+                    )
                     
                     # 後處理內容，確保完整性
                     content = self._post_process_content(content)
@@ -215,6 +263,9 @@ class ContentGenerator:
                             model=self.model,
                             prompt=prompt
                         )
+                    
+                    # 將內容加入快取
+                    self.content_cache[cache_key] = content
                     
                     # 記錄生成的內容
                     self.logger.info("成功生成內容 - 場景：%s，主題：%s，提示詞：%s，內容預覽：%s",
@@ -227,6 +278,11 @@ class ContentGenerator:
                     return content
                 else:
                     error_data = await response.text()
+                    self.performance_monitor.record_api_request(
+                        "openai", 
+                        success=False, 
+                        response_time=response_time
+                    )
                     raise AIError(
                         message="API 請求失敗",
                         model=self.model,
@@ -364,4 +420,46 @@ class ContentGenerator:
         if not any(content.endswith(end) for end in ('.', '!', '?', '。', '！', '？')):
             return False
             
-        return True 
+        return True
+        
+    async def pre_generate_content(self, count: int = 3) -> List[str]:
+        """預先生成多篇內容，用於快取
+        
+        Args:
+            count: 要生成的內容數量
+            
+        Returns:
+            List[str]: 生成的內容列表
+        """
+        contents = []
+        tasks = []
+        
+        # 創建多個內容生成任務
+        for _ in range(count):
+            tasks.append(self._generate_content())
+            
+        # 等待所有任務完成
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # 處理結果
+        for result in results:
+            if isinstance(result, str) and len(result) > 20:
+                contents.append(result)
+                
+        self.logger.info(f"預先生成了 {len(contents)}/{count} 篇內容")
+        
+        return contents
+        
+    async def get_content_stats(self) -> Dict[str, Any]:
+        """獲取內容生成統計資訊
+        
+        Returns:
+            Dict[str, Any]: 統計資訊
+        """
+        stats = {
+            "cached_content_count": len(self.content_cache),
+            "performance": self.performance_monitor.get_operation_stats("content_generation"),
+            "api_stats": self.performance_monitor.api_stats.get("openai", {})
+        }
+        
+        return stats 
