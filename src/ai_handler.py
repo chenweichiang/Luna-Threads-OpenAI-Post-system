@@ -62,6 +62,54 @@ def sanitize_text(text: str, max_length: int = 280) -> str:
     # 移除多餘的空白
     text = re.sub(r'\s+', ' ', text).strip()
     
+    # 英文替換詞典
+    english_to_chinese = {
+        'hey': '嗨',
+        'hello': '你好',
+        'hi': '嗨',
+        'ok': '好的',
+        'yes': '是的',
+        'no': '不',
+        'good': '好',
+        'bad': '不好',
+        'game': '遊戲',
+        'play': '玩',
+        'love': '愛',
+        'like': '喜歡',
+        'bye': '再見',
+        'see': '看',
+        'you': '你',
+        'me': '我',
+        'my': '我的',
+        'your': '你的',
+        'so': '非常',
+        'very': '很',
+        'happy': '開心',
+        'sad': '難過',
+        'cute': '可愛',
+        'cool': '酷',
+        'nice': '好',
+        'wow': '哇',
+        'omg': '天啊',
+        'lol': '哈哈',
+        'great': '棒',
+        'thanks': '謝謝',
+        'thank': '謝謝',
+        'welcome': '歡迎',
+    }
+    
+    # 檢測並替換英文單詞
+    english_pattern = re.compile(r'\b[a-zA-Z]+\b')
+    english_words = english_pattern.findall(text)
+    
+    for word in english_words:
+        word_lower = word.lower()
+        if word_lower in english_to_chinese:
+            text = text.replace(word, english_to_chinese[word_lower])
+        else:
+            # 如果沒有對應翻譯，直接移除
+            text = text.replace(word, '')
+    
     # 縮短過長的文本
     if len(text) > max_length:
         # 尋找適合截斷的位置
@@ -267,10 +315,15 @@ class AIHandler:
             
         # 檢查開頭詞
         valid_starts = [
+            # 中文開頭詞
             "欸", "啊", "咦", "哇", "唔", "呼",
             "天啊", "不會吧", "我的天", "嘿嘿",
-            "大家好", "Hey", "哇哦", "今天",
-            "好想", "好喜歡", "最近", "深夜"
+            "大家好", "哇哦", "今天",
+            "好想", "好喜歡", "最近", "深夜",
+            # 日語開頭詞
+            "あれ", "ねえ", "えっと", "わあ",
+            "うーん", "あのね", "みなさん",
+            "今日", "最近", "こんにちは"
         ]
         
         # 移除開頭的表情符號以檢查開頭詞
@@ -637,12 +690,17 @@ class AIHandler:
 - 平台：{luna_profile['社交特徵']['社交平台']['主要平台']}
 - 互動方式：{luna_profile['社交特徵']['社交平台']['互動方式']}
 
+語言設定：
+- Luna 只會說台灣繁體中文或日語，不會使用英文
+- 如果用戶使用中文，Luna 會用台灣繁體中文回覆
+- 如果用戶使用日語，Luna 會用日語回覆
+- 如果用戶使用英文或其他語言，Luna 仍然會用台灣繁體中文回覆
+
 請根據以下規則生成內容：
 
 1. 開頭用語：
-   - 欸、啊、咦、哇、唔、呼
-   - 天啊、不會吧、我的天、嘿嘿
-   - 大家好、Hey、哇哦
+   - 中文：欸、啊、咦、哇、唔、呼、天啊、不會吧、我的天、嘿嘿、大家好
+   - 日語：あれ、ねえ、えっと、わあ、うーん、あのね、みなさん
 
 2. 表情符號：
    - 開心時：{', '.join(luna_profile['社交特徵']['表情符號']['開心'])}
@@ -656,6 +714,7 @@ class AIHandler:
    - 結尾必須用「！」「。」「？」「～」之一
 
 4. 禁止事項：
+   - 不要使用英文單字或英文短語
    - 不要使用多句話
    - 不要使用省略號
    - 不要過度使用感嘆號
@@ -851,12 +910,20 @@ class AIHandler:
         
         return f"""你是一個名叫Luna的虛擬角色，請以她的身份生成一篇簡短的Threads貼文。
 
+語言設定：
+- Luna 只會說台灣繁體中文或日語，不會使用英文
+- 如果用戶使用中文，Luna 會用台灣繁體中文回覆
+- 如果用戶使用日語，Luna 會用日語回覆
+- 如果用戶使用英文或其他語言，Luna 會用台灣繁體中文回覆
+
 要求：
 1. 內容要求：
    - 每次只生成一句話
    - 字數限制在20-100字之間
    - 必須包含1-2個表情符號
-   - 必須以下列開頭之一：欸、啊、咦、哇、唔、呼、天啊、不會吧、我的天、嘿嘿、大家好、Hey、哇哦
+   - 必須以下列開頭之一：
+     (中文) 欸、啊、咦、哇、唔、呼、天啊、不會吧、我的天、嘿嘿、大家好
+     (日語) あれ、ねえ、えっと、わあ、うーん、あのね、みなさん
    
 2. 結尾要求：
    - 必須用以下符號之一結尾：！。？～
@@ -865,6 +932,7 @@ class AIHandler:
    - 配合文字內容選擇1-2個表情：🎨🎭🎬💕💖💫💭💡🙈✨😊🎮🎵❤️😓
 
 4. 禁止事項：
+   - 不要使用英文單字或英文短語
    - 不要使用多句話
    - 不要使用省略號
    - 不要過度使用感嘆號
@@ -932,6 +1000,56 @@ class AIHandler:
         content = content.replace('哥哥', '朋友')
         content = content.replace('弟弟們', '大家')
         content = content.replace('弟弟', '朋友')
+        
+        # 移除英文單字或短語
+        # 簡單的英文單字或短語的模式
+        english_pattern = re.compile(r'\b[a-zA-Z]+\b')
+        english_words = english_pattern.findall(content)
+        
+        # 英文替換詞
+        english_to_chinese = {
+            'hey': '嗨',
+            'hello': '你好',
+            'hi': '嗨',
+            'ok': '好的',
+            'yes': '是的',
+            'no': '不',
+            'good': '好',
+            'bad': '不好',
+            'game': '遊戲',
+            'play': '玩',
+            'love': '愛',
+            'like': '喜歡',
+            'bye': '再見',
+            'see': '看',
+            'you': '你',
+            'me': '我',
+            'my': '我的',
+            'your': '你的',
+            'so': '非常',
+            'very': '很',
+            'happy': '開心',
+            'sad': '難過',
+            'cute': '可愛',
+            'cool': '酷',
+            'nice': '好',
+            'wow': '哇',
+            'omg': '天啊',
+            'lol': '哈哈',
+            'great': '棒',
+            'thanks': '謝謝',
+            'thank': '謝謝',
+            'welcome': '歡迎',
+        }
+        
+        # 替換英文單字
+        for word in english_words:
+            word_lower = word.lower()
+            if word_lower in english_to_chinese:
+                content = content.replace(word, english_to_chinese[word_lower])
+            else:
+                # 如果沒有對應翻譯，直接移除
+                content = content.replace(word, '')
         
         # 移除多餘的標點符號
         content = re.sub(r'[!！]{2,}', '！', content)
