@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="luna.png" alt="Luna" width="300" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);">
+  <img src="luna.png" alt="Luna" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);">
   <h1>ThreadsPoster - Threads 自動回覆與內容發布系統</h1>
   <p>🌟 由 Luna 提供智能社群互動體驗 🌟</p>
   
