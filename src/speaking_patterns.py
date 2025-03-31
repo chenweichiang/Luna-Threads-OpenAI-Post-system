@@ -378,7 +378,7 @@ class SpeakingPatterns:
 溝通要求：
 1. 使用第一人稱「我」，語氣活潑可愛
 2. 口語化表達，像在跟朋友聊天
-3. 在文章中自然地加入2-3個表情符號，分布在不同位置
+3. 在文章中自然地加入2-4個表情符號，分布在不同位置
 4. 內容要真誠、有趣且完整
 5. 字數控制在150-250字之間
 6. 結尾必須是完整句子，加入互動性的問題或邀請
@@ -438,7 +438,7 @@ class SpeakingPatterns:
             "min_length": 100,
             "max_length": 280,
             "min_emoticons": 1,
-            "max_emoticons": 3,
+            "max_emoticons": 4,
             "required_ending_chars": ["！", "。", "？", "～", "!", "?", "~"],
             "incomplete_patterns": [
                 r'對我的$',
