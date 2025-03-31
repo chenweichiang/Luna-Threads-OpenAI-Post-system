@@ -318,27 +318,44 @@ class ContentGenerator:
         if not content.endswith(('.', '!', '?', '～', '~', '。', '！', '？')):
             content += '。'
             
+        # 檢查字數，如果太長則截斷
+        text_without_emoji = ''.join(c for c in content if ord(c) < 0x1F000)
+        if len(text_without_emoji) > 40:
+            # 尋找適當的截斷點
+            cutoff_indices = []
+            for punct in ['。', '！', '？', '.', '!', '?']:
+                idx = content.rfind(punct, 0, 40)
+                if idx > 0:
+                    cutoff_indices.append(idx + 1)
+            
+            if cutoff_indices:
+                content = content[:max(cutoff_indices)]
+            else:
+                # 找不到適當的截斷點，硬截斷並添加句點
+                words = content[:40]
+                content = words + ('。' if not words.endswith(('.', '!', '?', '。', '！', '？')) else '')
+                
         # 添加互動性結束語（如果尚未有）
-        has_interaction = any(q in content[-30:] for q in ('嗎？', '呢？', '呀？', '哦？', '呢?', '嗎?', '你覺得呢', '有沒有'))
+        has_interaction = any(q in content[-15:] for q in ('嗎？', '呢？', '呀？', '哦？', '呢?', '嗎?', '你覺得呢', '有沒有'))
         if not has_interaction:
             # 確定是否需要添加段落分隔
             if not content.endswith(('.', '!', '?', '。', '！', '？')):
                 content += '。'
                 
-            # 添加互動性結尾
+            # 添加簡短互動性結尾
             interaction_endings = [
-                "你們有類似經歷嗎？",
-                "大家都有什麼想法呢？",
-                "你們覺得怎麼樣呢？",
-                "有沒有人跟我一樣呀？",
-                "想聽聽大家的看法～"
+                "你呢？",
+                "同意嗎？",
+                "如何？",
+                "對吧？",
+                "是吧～"
             ]
             content += " " + random.choice(interaction_endings)
             
         # 確保表情符號使用
         emoji_count = sum(1 for c in content if ord(c) > 0x1F000)
         if emoji_count == 0:
-            # 如果沒有表情符號，添加1-2個到適當位置
+            # 如果沒有表情符號，添加1個到適當位置
             suitable_emoticons = ["✨", "💕", "🌟", "💫", "💖", "😊", "🎮", "📚", "🌙", "💭"]
             positions = [
                 # 在第一句話後
@@ -356,45 +373,15 @@ class ContentGenerator:
                 position = sorted(positions)[0]
                 emoji = random.choice(suitable_emoticons)
                 content = content[:position] + " " + emoji + " " + content[position:]
-                
-        # 檢查字數並確保內容完整
-        if len(content) > 280:
-            # 如果太長，尋找適當的截斷點
-            sentences = []
-            current = ""
-            for char in content:
-                current += char
-                if char in ('.', '!', '?', '。', '！', '？') and len(current) > 100:
-                    sentences.append(current)
-                    current = ""
-            if current:
-                sentences.append(current)
-                
-            # 選擇最適合的句子組合
-            total_content = ""
-            for sentence in sentences:
-                if len(total_content) + len(sentence) <= 280:
-                    total_content += sentence
-                else:
-                    break
-                    
-            # 如果截斷後沒有互動性結尾，添加一個
-            if not any(q in total_content[-30:] for q in ('嗎？', '呢？', '呀？', '哦？', '呢?', '嗎?', '你覺得呢', '有沒有')):
-                # 確保以句號結束
-                if not total_content.endswith(('.', '!', '?', '。', '！', '？')):
-                    total_content += '。'
-                    
-                # 添加互動性結尾
-                interaction_endings = [
-                    "你們有類似經歷嗎？",
-                    "大家都有什麼想法呢？",
-                    "你們覺得怎麼樣呢？",
-                    "有沒有人跟我一樣呀？",
-                    "想聽聽大家的看法～"
-                ]
-                total_content += " " + random.choice(interaction_endings)
-                
-            content = total_content
+        
+        # 再次檢查長度，確保不超過40字
+        text_without_emoji = ''.join(c for c in content if ord(c) < 0x1F000)
+        if len(text_without_emoji) > 40:
+            # 如果互動性結尾導致超過字數限制，使用更簡短的結尾
+            content = content.split()[0]  # 保留第一部分
+            if not content.endswith(('.', '!', '?', '。', '！', '？')):
+                content += '。'
+            content += " 你呢？"
             
         return content
             
