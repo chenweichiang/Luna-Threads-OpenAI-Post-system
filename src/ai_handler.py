@@ -1,14 +1,17 @@
 """
-Version: 2024.03.31 (v1.1.6)
+Version: 2025.03.31 (v1.1.9)
 Author: ThreadsPoster Team
 Description: AI 處理器模組，負責處理 AI 生成和回應
-Last Modified: 2024.03.31
+Copyright (c) 2025 Chiang, Chenwei. All rights reserved.
+License: MIT License
+Last Modified: 2025.03.31
 Changes:
 - 改進錯誤處理
 - 優化資料庫連接
 - 加強人設記憶維護
 - 支援多種回應風格
 - 動態調整語氣和主題
+- 整合新的說話模式模組
 """
 
 import logging
@@ -25,6 +28,7 @@ import pytz
 import aiohttp
 from openai import AsyncOpenAI
 from cachetools import TTLCache
+from src.speaking_patterns import SpeakingPatterns
 
 # 導入性能監視器
 try:
@@ -197,6 +201,7 @@ class AIHandler:
         self.logger = logging.getLogger(__name__)
         self.model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
         self.performance_monitor = performance_monitor
+        self.speaking_patterns = SpeakingPatterns()
         
         # 輔助函數：清理環境變數值中的註釋
         def clean_env(env_name, default_value):
@@ -671,58 +676,16 @@ class AIHandler:
         Returns:
             str: 角色提示詞
         """
-        # 獲取Luna的人設
-        luna_profile = await self._get_luna_personality()
+        # 根據時間判斷是否為深夜模式
+        hour = int(current_hour)
+        if hour >= self.night_mode_start or hour < self.night_mode_end:
+            context = "night"
+        else:
+            context = "base"
         
-        prompt = f"""你是一個名叫Luna的虛擬角色。
-
-基本特徵：
-- 身份：{luna_profile['基本特徵']['身份']}
-- 性格：{luna_profile['基本特徵']['性格']}
-- 特點：{luna_profile['基本特徵']['特點']}
-
-興趣愛好：
-- 遊戲：{luna_profile['興趣愛好']['遊戲']['最愛類型']}
-- 音樂：{', '.join(luna_profile['興趣愛好']['音樂']['喜好'])}
-- 收藏：{luna_profile['興趣愛好']['收藏']['主要收藏']}
-
-社交特徵：
-- 平台：{luna_profile['社交特徵']['社交平台']['主要平台']}
-- 互動方式：{luna_profile['社交特徵']['社交平台']['互動方式']}
-
-語言設定：
-- Luna 只會說台灣繁體中文或日語，不會使用英文
-- 如果用戶使用中文，Luna 會用台灣繁體中文回覆
-- 如果用戶使用日語，Luna 會用日語回覆
-- 如果用戶使用英文或其他語言，Luna 仍然會用台灣繁體中文回覆
-
-請根據以下規則生成內容：
-
-1. 開頭用語：
-   - 中文：欸、啊、咦、哇、唔、呼、天啊、不會吧、我的天、嘿嘿、大家好
-   - 日語：あれ、ねえ、えっと、わあ、うーん、あのね、みなさん
-
-2. 表情符號：
-   - 開心時：{', '.join(luna_profile['社交特徵']['表情符號']['開心'])}
-   - 寂寞時：{', '.join(luna_profile['社交特徵']['表情符號']['寂寞'])}
-   - 期待時：{', '.join(luna_profile['社交特徵']['表情符號']['期待'])}
-
-3. 內容規則：
-   - 每次只生成一句話
-   - 字數限制在20-100字之間
-   - 必須包含1-2個表情符號
-   - 結尾必須用「！」「。」「？」「～」之一
-
-4. 禁止事項：
-   - 不要使用英文單字或英文短語
-   - 不要使用多句話
-   - 不要使用省略號
-   - 不要過度使用感嘆號
-   - 不要使用過於生硬的轉折
-
-請直接生成內容，不要加入任何解釋或說明。"""
-        
-        return prompt
+        # 使用說話模式模組獲取系統提示詞
+        topic = await self.get_topic_by_time()
+        return self.speaking_patterns.get_system_prompt(context, topic)
 
     async def add_interaction(self, user_id: str, message: str, response: str) -> None:
         """添加用戶互動記錄"""
@@ -781,13 +744,34 @@ class AIHandler:
             return {"conversations": []}
 
     async def generate_article(self) -> Optional[str]:
-        """生成一篇文章"""
+        """生成文章內容
+        
+        Returns:
+            Optional[str]: 生成的文章內容，如果生成失敗則返回 None
+        """
         try:
+            # 獲取當前上下文
+            context = await self._get_current_context()
+            
+            # 使用說話模式模組獲取系統提示詞
+            system_prompt = self.speaking_patterns.get_system_prompt(
+                context["context_type"],
+                context["topic"]
+            )
+            
+            # 使用說話模式模組獲取用戶提示詞
+            user_prompt = self.speaking_patterns.get_user_prompt(
+                context["topic"],
+                context.get("prompt_text", "")
+            )
+            
             # 建立提示詞
-            prompt = self._build_character_prompt()
+            prompt = f"""{system_prompt}
+
+{user_prompt}"""
             
             # 呼叫 OpenAI API
-            response = await self.client.chat.completions.create(
+            response = await self.openai_client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": prompt}
@@ -807,7 +791,7 @@ class AIHandler:
             # 如果文字不符合要求，重試最多3次
             retry_count = 0
             while text is None and retry_count < 3:
-                response = await self.client.chat.completions.create(
+                response = await self.openai_client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
                         {"role": "system", "content": prompt}
@@ -823,7 +807,7 @@ class AIHandler:
             return text
             
         except Exception as e:
-            logger.error(f"生成文章失敗: {str(e)}")
+            self.logger.error("生成文章時發生錯誤：%s", str(e))
             return None
 
     async def _get_current_context(self) -> Dict[str, Any]:
@@ -900,51 +884,26 @@ class AIHandler:
         
         Args:
             topics: 主題列表
-            mood: 當前心情
-            style: 表達風格
+            mood: 心情
+            style: 風格
             
         Returns:
             str: 生成的提示詞
         """
-        time_period = self._get_current_time_period()
+        # 根據風格選擇場景
+        context = "base"
+        if style == "gaming":
+            context = "gaming"
+        elif style == "social":
+            context = "social"
+        elif mood in ["sad", "tired", "lonely"]:
+            context = "night"
         
-        return f"""你是一個名叫Luna的虛擬角色，請以她的身份生成一篇簡短的Threads貼文。
-
-語言設定：
-- Luna 只會說台灣繁體中文或日語，不會使用英文
-- 如果用戶使用中文，Luna 會用台灣繁體中文回覆
-- 如果用戶使用日語，Luna 會用日語回覆
-- 如果用戶使用英文或其他語言，Luna 會用台灣繁體中文回覆
-
-要求：
-1. 內容要求：
-   - 每次只生成一句話
-   - 字數限制在20-100字之間
-   - 必須包含1-2個表情符號
-   - 必須以下列開頭之一：
-     (中文) 欸、啊、咦、哇、唔、呼、天啊、不會吧、我的天、嘿嘿、大家好
-     (日語) あれ、ねえ、えっと、わあ、うーん、あのね、みなさん
-   
-2. 結尾要求：
-   - 必須用以下符號之一結尾：！。？～
-
-3. 表情符號：
-   - 配合文字內容選擇1-2個表情：🎨🎭🎬💕💖💫💭💡🙈✨😊🎮🎵❤️😓
-
-4. 禁止事項：
-   - 不要使用英文單字或英文短語
-   - 不要使用多句話
-   - 不要使用省略號
-   - 不要過度使用感嘆號
-   - 不要使用過於生硬的轉折
-
-當前情境：
-- 時間：{time_period}
-- 心情：{mood}
-- 風格：{style}
-- 主題：{', '.join(topics)}
-
-請直接生成一句符合以上要求的貼文內容。"""
+        # 從主題列表中選擇一個
+        topic = random.choice(topics) if topics else "日常生活"
+        
+        # 使用說話模式模組獲取系統提示詞
+        return self.speaking_patterns.get_system_prompt(context, topic)
 
     def _detect_topics(self, content: str) -> List[str]:
         """檢測文章主題

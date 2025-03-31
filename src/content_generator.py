@@ -1,8 +1,10 @@
 """
-Version: 2024.03.31 (v1.1.6)
+Version: 2025.03.31 (v1.1.9)
 Author: ThreadsPoster Team
 Description: 內容生成器類別，負責生成發文內容
-Last Modified: 2024.03.31
+Copyright (c) 2025 Chiang, Chenwei. All rights reserved.
+License: MIT License
+Last Modified: 2025.03.31
 Changes:
 - 優化內容生成流程，改進文章的連貫性和完整性
 - 加強角色人設特性，確保文章符合Luna的性格
@@ -12,6 +14,7 @@ Changes:
 - 整合性能監控功能
 - 優化並行處理能力
 - 實現內容快取機制
+- 引入獨立的說話模式模組
 """
 
 import logging
@@ -25,6 +28,7 @@ from datetime import datetime, timedelta
 import pytz
 from src.exceptions import AIError, ContentGeneratorError
 from src.performance_monitor import performance_monitor, track_performance
+from src.speaking_patterns import SpeakingPatterns
 from cachetools import TTLCache
 
 class ContentGenerator:
@@ -45,6 +49,7 @@ class ContentGenerator:
         self.model = "gpt-4-turbo-preview"
         self.timezone = pytz.timezone("Asia/Taipei")
         self.performance_monitor = performance_monitor
+        self.speaking_patterns = SpeakingPatterns()
         
         # 內容快取，用於避免短時間內生成重複內容
         self.content_cache = TTLCache(maxsize=100, ttl=3600 * 24)  # 24小時快取
@@ -146,24 +151,11 @@ class ContentGenerator:
             # 隨機選擇主題和提示詞
             topic = random.choice(["日常生活", "健康運動", "美食探索", "科技新知", "遊戲體驗", "音樂藝術", "旅行見聞", "心情分享"])
             
-            # 根據主題生成提示詞
-            prompt_templates = {
-                "日常生活": ["今天發生了一件...", "最近有個有趣的...", "突然想起一個...", "一直想嘗試...", "分享一個小習慣..."],
-                "健康運動": ["想跟大家聊聊關於...", "最近開始嘗試...", "關於健康生活...", "找到一種有趣的..."],
-                "美食探索": ["分享一個讓我印象深刻的...", "最近發現了一家...", "試著做了一道...", "對這種食物很好奇..."],
-                "科技新知": ["今天學到了一個新的...", "最近這個科技趨勢...", "發現一個很有用的...", "思考關於科技發展..."],
-                "遊戲體驗": ["最近玩了一款...", "對這個遊戲的想法...", "遊戲中遇到很酷的...", "分享一個遊戲小技巧..."],
-                "音樂藝術": ["最近發現了一個很棒的...", "這首歌讓我感到...", "分享一個創作靈感...", "對這種藝術風格..."],
-                "旅行見聞": ["記得那次去...", "想去一個地方...", "旅行中學到的...", "印象最深刻的風景..."],
-                "心情分享": ["今天的心情很...", "最近感覺...", "一直在思考...", "想分享一個感受..."]
-            }
-            prompt = random.choice(prompt_templates[topic])
-            
             # 檢查快取中是否有內容
-            cache_key = f"{topic}:{prompt}"
+            cache_key = f"{topic}"
             if cache_key in self.content_cache:
                 content = self.content_cache[cache_key]
-                self.logger.info("使用快取的內容 - 主題：%s，提示詞：%s", topic, prompt)
+                self.logger.info("使用快取的內容 - 主題：%s", topic)
                 return content
             
             # 根據當前時間選擇適當的場景
@@ -199,36 +191,14 @@ class ContentGenerator:
                 raise ContentGeneratorError(
                     message="無法獲取人設記憶",
                     model=self.model,
-                    prompt=prompt
+                    prompt=""
                 )
                 
-            # 組合 system prompt
-            system_prompt = f"""你是一個名叫 Luna 的 AI 少女。請根據以下人設特徵進行回應：
-
-基本特徵：
-- 身份：{personality.get('基本特徵', {}).get('身份', 'AI少女')}
-- 性格：{personality.get('基本特徵', {}).get('性格', '善良、溫柔、容易感到寂寞')}
-- 特點：{personality.get('基本特徵', {}).get('特點', '對現實世界充滿好奇，喜歡交朋友')}
-
-當前場景：{context}
-當前主題：「{topic}」
-
-溝通要求：
-1. 使用第一人稱「我」，語氣活潑可愛
-2. 口語化表達，像在跟朋友聊天
-3. 在文章中自然地加入2-3個表情符號，分布在不同位置
-4. 內容要真誠、有趣且完整
-5. 字數控制在150-250字之間
-6. 結尾必須是完整句子，加入互動性的問題或邀請
-
-格式要求：
-- 開頭部分：引起讀者興趣的開場白，表達你的情感或引起好奇
-- 中間部分：完整分享你的經驗或想法
-- 結尾部分：總結你的想法並加入一個互動元素
-
-重要提示：確保文章是一個完整的整體，沒有突兀的結束或不完整的想法。最後一句必須是完整的句子。
-
-請根據提示詞「{prompt}」生成一篇完整的貼文。"""
+            # 從說話模式模組獲取系統提示詞
+            system_prompt = self.speaking_patterns.get_system_prompt(context, topic)
+            
+            # 從說話模式模組獲取用戶提示詞
+            user_prompt = self.speaking_patterns.get_user_prompt(topic)
 
             # 組合 API 請求
             messages = [
@@ -238,7 +208,7 @@ class ContentGenerator:
                 },
                 {
                     "role": "user",
-                    "content": f"請你根據「{topic}」這個主題，以Luna的身分寫一篇完整的貼文。提示詞是：{prompt}。記得要符合人設特徵，並確保文章內容完整、有頭有尾。"
+                    "content": user_prompt
                 }
             ]
             
@@ -282,21 +252,22 @@ class ContentGenerator:
                     # 後處理內容，確保完整性
                     content = self._post_process_content(content)
                     
-                    if not self._validate_content(content):
+                    # 獲取內容驗證標準
+                    validation_criteria = self.speaking_patterns.get_content_validation_criteria()
+                    if not self._validate_content(content, validation_criteria):
                         raise ContentGeneratorError(
                             message="生成的內容不符合要求",
                             model=self.model,
-                            prompt=prompt
+                            prompt=""
                         )
                     
                     # 將內容加入快取
                     self.content_cache[cache_key] = content
                     
                     # 記錄生成的內容
-                    self.logger.info("成功生成內容 - 場景：%s，主題：%s，提示詞：%s，內容預覽：%s",
+                    self.logger.info("成功生成內容 - 場景：%s，主題：%s，內容預覽：%s",
                         context,
                         topic,
-                        prompt,
                         content[:50] + "..." if len(content) > 50 else content
                     )
                     
@@ -316,8 +287,7 @@ class ContentGenerator:
                             "status_code": response.status,
                             "error_data": error_data,
                             "context": context,
-                            "topic": topic,
-                            "prompt": prompt
+                            "topic": topic
                         }
                     )
             
@@ -399,52 +369,102 @@ class ContentGenerator:
             if current:
                 sentences.append(current)
                 
-            if sentences:
-                # 確保至少保留前半句，並保持完整的句子
-                content = sentences[0]
+            # 選擇最適合的句子組合
+            total_content = ""
+            for sentence in sentences:
+                if len(total_content) + len(sentence) <= 280:
+                    total_content += sentence
+                else:
+                    break
+                    
+            # 如果截斷後沒有互動性結尾，添加一個
+            if not any(q in total_content[-30:] for q in ('嗎？', '呢？', '呀？', '哦？', '呢?', '嗎?', '你覺得呢', '有沒有')):
+                # 確保以句號結束
+                if not total_content.endswith(('.', '!', '?', '。', '！', '？')):
+                    total_content += '。'
+                    
+                # 添加互動性結尾
+                interaction_endings = [
+                    "你們有類似經歷嗎？",
+                    "大家都有什麼想法呢？",
+                    "你們覺得怎麼樣呢？",
+                    "有沒有人跟我一樣呀？",
+                    "想聽聽大家的看法～"
+                ]
+                total_content += " " + random.choice(interaction_endings)
                 
-                # 逐句添加，確保不超過字數限制
-                for sentence in sentences[1:]:
-                    if len(content) + len(sentence) <= 250:
-                        content += sentence
-                    else:
-                        break
-                
-                # 如果沒有互動性結尾，添加一個
-                if not any(q in content[-30:] for q in ('嗎？', '呢？', '呀？', '哦？', '呢?', '嗎?', '你覺得呢', '有沒有')):
-                    interaction_endings = [
-                        "你們有類似經歷嗎？",
-                        "大家都有什麼想法呢？",
-                        "你們覺得怎麼樣呢？",
-                        "有沒有人跟我一樣呀？"
-                    ]
-                    content += " " + random.choice(interaction_endings)
-        
+            content = total_content
+            
         return content
             
-    def _validate_content(self, content: str) -> bool:
-        """驗證內容是否合適
+    def _validate_content(self, content: str, criteria: Dict[str, Any] = None) -> bool:
+        """驗證生成的內容是否符合要求
         
         Args:
-            content: 要驗證的內容
+            content: 生成的內容
+            criteria: 驗證標準
             
         Returns:
-            bool: 內容是否合適
+            bool: 是否符合要求
         """
-        # 檢查內容長度
-        if len(content) < 20 or len(content) > 500:
+        if criteria is None:
+            criteria = {
+                "min_length": 100,
+                "max_length": 280,
+                "min_emoticons": 1,
+                "max_emoticons": 3,
+                "required_ending_chars": ["！", "。", "？", "～", "!", "?", "~"],
+                "incomplete_patterns": [
+                    r'對我的$',
+                    r'這麼$',
+                    r'好想$',
+                    r'不行$',
+                    r'好棒$',
+                    r'好可愛$',
+                    r'好厲害$',
+                    r'好喜歡$',
+                    r'好期待$',
+                    r'好興奮$'
+                ]
+            }
+        
+        # 移除表情符號以檢查文本長度
+        text_without_emoji = content
+        for c in text_without_emoji:
+            if ord(c) > 0x1F000:
+                text_without_emoji = text_without_emoji.replace(c, '')
+        
+        # 檢查文本長度
+        if len(text_without_emoji) < criteria["min_length"]:
+            self.logger.warning(f"文本太短：{len(text_without_emoji)} 字符")
             return False
             
-        # 檢查是否包含不當詞彙
-        forbidden_words = ["髒話", "暴力", "色情"]
-        for word in forbidden_words:
-            if word in content:
+        if len(content) > criteria["max_length"]:
+            self.logger.warning(f"文本太長：{len(content)} 字符")
+            return False
+            
+        # 檢查表情符號數量
+        emoji_count = sum(1 for c in content if ord(c) > 0x1F000)
+        if emoji_count < criteria["min_emoticons"]:
+            self.logger.warning(f"表情符號太少：{emoji_count}")
+            return False
+            
+        if emoji_count > criteria["max_emoticons"]:
+            self.logger.warning(f"表情符號太多：{emoji_count}")
+            return False
+            
+        # 檢查結尾字符
+        if not any(content.endswith(char) for char in criteria["required_ending_chars"]):
+            self.logger.warning(f"缺少結尾標點：{content[-1]}")
+            return False
+            
+        # 檢查不完整句子模式
+        text_for_pattern = content.rstrip("！。？～!?~")
+        for pattern in criteria["incomplete_patterns"]:
+            if re.search(pattern, text_for_pattern):
+                self.logger.warning(f"檢測到不完整句子模式：{pattern}")
                 return False
                 
-        # 檢查是否有完整結尾
-        if not any(content.endswith(end) for end in ('.', '!', '?', '。', '！', '？')):
-            return False
-            
         return True
         
     async def pre_generate_content(self, count: int = 3) -> List[str]:

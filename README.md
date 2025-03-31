@@ -100,6 +100,7 @@ src/
 ├── monitor.py       # 監控系統，協調整體系統運行和任務分配
 ├── performance_monitor.py # 性能監控模組，追蹤系統性能和資源使用
 ├── content_generator.py # 內容生成器，專門處理不同場景的內容生成
+├── speaking_patterns.py # 說話模式管理器，定義不同場景和時間的表達風格
 ├── utils.py         # 工具函數集，提供各種通用功能
 ├── logger.py        # 日誌處理器，統一管理系統日誌
 ├── retry.py         # 重試機制，提供網絡請求和操作的自動重試

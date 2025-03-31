@@ -1,8 +1,10 @@
 """
-Version: 2024.03.31 (v1.1.6)
+Version: 2025.03.31 (v1.1.9)
 Author: ThreadsPoster Team
 Description: 主程式入口點
-Last Modified: 2024.03.31
+Copyright (c) 2025 Chiang, Chenwei. All rights reserved.
+License: MIT License
+Last Modified: 2025.03.31
 Changes:
 - 改進錯誤處理
 - 優化資源管理
@@ -14,6 +16,7 @@ Changes:
 - 整合性能監控功能
 - 優化記憶體使用
 - 預先生成內容以提高回應速度
+- 引入獨立的說話模式模組
 """
 
 import asyncio
@@ -37,6 +40,7 @@ from src.monitor import Monitor
 from src.time_controller import TimeController
 from src.content_generator import ContentGenerator
 from src.performance_monitor import performance_monitor, track_performance
+from src.speaking_patterns import SpeakingPatterns
 
 # 配置日誌
 logging.basicConfig(
