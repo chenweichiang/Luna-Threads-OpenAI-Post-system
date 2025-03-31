@@ -10,10 +10,12 @@ Changes:
 - 定義不同場景的說話風格
 - 支援時間特定的表達方式
 - 加入情緒與主題相關表達模式
+- 新增資料庫持久化功能
 """
 
 import random
 import os
+import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import pytz
@@ -24,6 +26,8 @@ class SpeakingPatterns:
     def __init__(self):
         """初始化說話模式管理器"""
         self.timezone = pytz.timezone("Asia/Taipei")
+        self.logger = logging.getLogger(__name__)
+        self.db = None  # 資料庫處理器會在後續設置
         
         # 輔助函數：清理環境變數值中的註釋
         def clean_env(env_name, default_value):
@@ -46,6 +50,39 @@ class SpeakingPatterns:
             }
         }
         
+        # 初始化說話風格，後續可以從資料庫加載
+        self._initialize_default_speaking_styles()
+        
+    def set_db_handler(self, db_handler):
+        """設置資料庫處理器
+        
+        Args:
+            db_handler: 資料庫處理器實例
+        """
+        self.db = db_handler
+        
+    async def initialize(self):
+        """初始化說話模式，從資料庫載入或使用預設值"""
+        if self.db:
+            try:
+                # 從資料庫載入說話模式
+                await self.load_patterns_from_db()
+                self.logger.info("從資料庫載入說話模式成功")
+            except Exception as e:
+                self.logger.warning(f"從資料庫載入說話模式失敗：{str(e)}，使用預設值")
+                # 發生錯誤時使用預設值
+                self._initialize_default_speaking_styles()
+                # 嘗試保存預設值到資料庫
+                try:
+                    await self.save_patterns_to_db()
+                    self.logger.info("已將預設說話模式保存到資料庫")
+                except Exception as e:
+                    self.logger.error(f"保存預設說話模式到資料庫失敗：{str(e)}")
+        else:
+            self.logger.warning("未設置資料庫處理器，使用預設說話模式")
+            
+    def _initialize_default_speaking_styles(self):
+        """初始化預設說話風格"""
         # 定義各種場景的說話風格
         self.speaking_styles = {
             "base": {
@@ -297,6 +334,123 @@ class SpeakingPatterns:
                 "表情符號": ["🌃", "🌌", "✨", "🌙", "💤", "🦉", "🧸", "📝"]
             }
         }
+        
+    async def load_patterns_from_db(self):
+        """從資料庫載入說話模式"""
+        if not self.db:
+            self.logger.warning("未設置資料庫處理器，無法載入說話模式")
+            return
+            
+        try:
+            # 獲取說話風格
+            speaking_styles_data = await self.db.database.get_speaking_pattern("speaking_styles")
+            if speaking_styles_data and "styles" in speaking_styles_data:
+                self.speaking_styles = speaking_styles_data["styles"]
+                self.logger.info("從資料庫載入說話風格成功")
+                
+            # 獲取主題關鍵詞
+            topics_data = await self.db.database.get_speaking_pattern("topics_keywords")
+            if topics_data and "keywords" in topics_data:
+                self.topics_keywords = topics_data["keywords"]
+                self.logger.info("從資料庫載入主題關鍵詞成功")
+                
+            # 獲取情感詞典
+            sentiment_data = await self.db.database.get_speaking_pattern("sentiment_dict")
+            if sentiment_data and "sentiments" in sentiment_data:
+                self.sentiment_dict = sentiment_data["sentiments"]
+                self.logger.info("從資料庫載入情感詞典成功")
+                
+            # 獲取時間特定模式
+            time_data = await self.db.database.get_speaking_pattern("time_specific_patterns")
+            if time_data and "patterns" in time_data:
+                self.time_specific_patterns = time_data["patterns"]
+                self.logger.info("從資料庫載入時間特定模式成功")
+                
+        except Exception as e:
+            self.logger.error(f"從資料庫載入說話模式失敗：{str(e)}")
+            raise
+            
+    async def save_patterns_to_db(self):
+        """將說話模式保存到資料庫"""
+        if not self.db:
+            self.logger.warning("未設置資料庫處理器，無法保存說話模式")
+            return
+            
+        try:
+            # 保存說話風格
+            await self.db.database.save_speaking_pattern(
+                "speaking_styles", 
+                {"styles": self.speaking_styles}
+            )
+            
+            # 保存主題關鍵詞
+            await self.db.database.save_speaking_pattern(
+                "topics_keywords", 
+                {"keywords": self.topics_keywords}
+            )
+            
+            # 保存情感詞典
+            await self.db.database.save_speaking_pattern(
+                "sentiment_dict", 
+                {"sentiments": self.sentiment_dict}
+            )
+            
+            # 保存時間特定模式
+            await self.db.database.save_speaking_pattern(
+                "time_specific_patterns", 
+                {"patterns": self.time_specific_patterns}
+            )
+            
+            self.logger.info("說話模式已成功保存到資料庫")
+            
+        except Exception as e:
+            self.logger.error(f"保存說話模式到資料庫失敗：{str(e)}")
+            raise
+            
+    async def add_speaking_pattern(self, context: str, category: str, pattern: str):
+        """添加新的說話模式
+        
+        Args:
+            context: 場景，如 "base", "gaming", "social", "night"
+            category: 類別，如 "開場白", "結尾句", "口頭禪", "情感表達", "表情符號"
+            pattern: 模式內容
+            
+        Returns:
+            bool: 是否添加成功
+        """
+        try:
+            # 檢查場景是否存在
+            if context not in self.speaking_styles:
+                self.speaking_styles[context] = {
+                    "開場白": [],
+                    "結尾句": [],
+                    "口頭禪": [],
+                    "情感表達": [],
+                    "表情符號": []
+                }
+                
+            # 檢查類別是否存在
+            if category not in self.speaking_styles[context]:
+                self.speaking_styles[context][category] = []
+                
+            # 檢查是否已存在相同模式
+            if pattern in self.speaking_styles[context][category]:
+                self.logger.info(f"說話模式已存在：{context} - {category} - {pattern}")
+                return False
+                
+            # 添加模式
+            self.speaking_styles[context][category].append(pattern)
+            
+            # 保存到資料庫
+            if self.db:
+                await self.save_patterns_to_db()
+                
+            self.logger.info(f"成功添加說話模式：{context} - {category} - {pattern}")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"添加說話模式失敗：{str(e)}")
+            return False
     
     def get_speaking_style(self, context: str = "base") -> Dict[str, List[str]]:
         """獲取特定場景的說話風格

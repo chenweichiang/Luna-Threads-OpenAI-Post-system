@@ -87,6 +87,13 @@ async def startup():
     await db_handler.initialize()
     logger.info("資料庫連接成功")
     
+    # 初始化說話模式管理器
+    logger.info("初始化說話模式管理器...")
+    speaking_patterns = SpeakingPatterns()
+    speaking_patterns.set_db_handler(db_handler)
+    await speaking_patterns.initialize()
+    logger.info("說話模式管理器初始化完成")
+    
     # 初始化 API 處理器
     logger.info("初始化 API 處理器...")
     threads_api = ThreadsAPI(
@@ -98,6 +105,7 @@ async def startup():
     # 初始化內容生成器
     logger.info("初始化內容生成器...")
     content_generator = ContentGenerator(config.OPENAI_API_KEY, session, db_handler)
+    content_generator.speaking_patterns = speaking_patterns  # 設置說話模式模組
     await content_generator.initialize()
     
     # 初始化 AI 處理器
@@ -107,6 +115,7 @@ async def startup():
         session,
         db_handler
     )
+    ai_handler.speaking_patterns = speaking_patterns  # 設置說話模式模組
     await ai_handler.initialize()
     
     # 初始化 Threads 處理器

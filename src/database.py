@@ -77,6 +77,7 @@ class Database:
             await self.db.personality_memories.create_index([("context", 1)], unique=True)
             await self.db.posts.create_index([("post_id", 1)], unique=True)
             await self.db.posts.create_index([("timestamp", -1)])
+            await self.db.speaking_patterns.create_index([("type", 1)], unique=True)
             
             # 檢查連接是否成功
             await self.client.admin.command('ping')
@@ -559,3 +560,56 @@ class Database:
         except Exception as e:
             self.logger.error(f"獲取資料庫統計資訊時發生錯誤：{str(e)}")
             return {"error": str(e)}
+
+    @track_performance("db_save_speaking_pattern")
+    async def save_speaking_pattern(self, pattern_type: str, data: Dict[str, Any]):
+        """保存說話模式
+        
+        Args:
+            pattern_type: 模式類型，如 "speaking_styles", "topics_keywords" 等
+            data: 模式數據
+        """
+        try:
+            # 更新資料庫
+            await self.db.speaking_patterns.update_one(
+                {"type": pattern_type},
+                {"$set": {
+                    **data,
+                    "updated_at": datetime.now(pytz.UTC)
+                }},
+                upsert=True
+            )
+            
+            self.logger.info(f"說話模式保存成功：{pattern_type}")
+            self.performance_monitor.record_db_operation("update", True)
+            
+        except Exception as e:
+            self.logger.error(f"保存說話模式時發生錯誤：{str(e)}")
+            self.performance_monitor.record_db_operation("update", False)
+            raise DatabaseError(f"保存說話模式失敗：{str(e)}")
+            
+    @track_performance("db_get_speaking_pattern")
+    async def get_speaking_pattern(self, pattern_type: str) -> Optional[Dict[str, Any]]:
+        """獲取說話模式
+        
+        Args:
+            pattern_type: 模式類型，如 "speaking_styles", "topics_keywords" 等
+            
+        Returns:
+            Optional[Dict[str, Any]]: 模式數據，如果不存在則返回 None
+        """
+        try:
+            # 查詢資料庫
+            pattern = await self.db.speaking_patterns.find_one({"type": pattern_type})
+            
+            if pattern:
+                self.performance_monitor.record_db_operation("query", True, False)
+            else:
+                self.performance_monitor.record_db_operation("query", True, False)
+                
+            return pattern
+            
+        except Exception as e:
+            self.logger.error(f"獲取說話模式時發生錯誤：{str(e)}")
+            self.performance_monitor.record_db_operation("query", False)
+            raise DatabaseError(f"獲取說話模式失敗：{str(e)}")

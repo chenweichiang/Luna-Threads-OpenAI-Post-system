@@ -201,7 +201,7 @@ class AIHandler:
         self.logger = logging.getLogger(__name__)
         self.model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
         self.performance_monitor = performance_monitor
-        self.speaking_patterns = SpeakingPatterns()
+        self.speaking_patterns = None  # 將在 main.py 中設置
         
         # 輔助函數：清理環境變數值中的註釋
         def clean_env(env_name, default_value):
