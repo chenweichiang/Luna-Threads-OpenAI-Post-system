@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="Luna_latest.png" alt="Luna" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);">
+  <img src="assets/Luna_latest.png" alt="Luna" style="border-radius: 10px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);">
   <h1>ThreadsPoster - Threads 自動回覆與內容發布系統</h1>
   <p>🌟 由 Luna 提供智能社群互動體驗 🌟</p>
   
@@ -493,7 +493,7 @@ MIT 授權允許您自由使用、修改和分發本專案，無論是商業還�
 
 ## 版本變更
 
-請查看 [CHANGELOG.md](CHANGELOG.md) 了解詳細的版本變更歷史。
+請查看 [docs/CHANGELOG.md](docs/CHANGELOG.md) 了解詳細的版本變更歷史。
 
 ### v1.2.0 (2025.04.01) 最新版本
 
@@ -542,8 +542,8 @@ MIT 授權允許您自由使用、修改和分發本專案，無論是商業還�
 
 #### 開發與維護改進
 - **版本控制標準化**：所有源代碼文件添加統一的版權聲明和版本標記
-- **文檔完善**：添加 CHANGELOG.md 和 CONTRIBUTING.md，詳細記錄版本變更和貢獻指南
-- **自動化工具**：新增 `update_copyright.py` 腳本，自動更新所有源碼文件的版權和版本信息
+- **文檔完善**：添加文檔目錄和完整變更日誌，詳細記錄版本變更和貢獻指南
+- **自動化工具**：新增工具腳本，自動更新所有源碼文件的版權和版本信息
 - **資源整理**：移除舊版本的備份文件，優化倉庫結構，減少冗餘文件
 
 ## 在 GitHub 上運行系統
