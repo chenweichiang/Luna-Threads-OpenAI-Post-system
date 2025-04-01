@@ -140,4 +140,121 @@ class Monitor:
             sig: 信號類型
         """
         self.logger.info("收到信號：%s", sig.name)
-        await self.stop() 
+        await self.stop()
+
+class LunaThreadsMonitor:
+    """Luna Threads 監控器，用於監控 Luna 的發文系統"""
+    
+    def __init__(
+        self,
+        config,
+        db_handler: DatabaseHandler,
+        time_controller: TimeController,
+        content_generator: ContentGenerator,
+        threads_handler: ThreadsHandler
+    ):
+        """初始化 Luna Threads 監控器
+        
+        Args:
+            config: 設定物件
+            db_handler: 資料庫處理器
+            time_controller: 時間控制器
+            content_generator: 內容生成器
+            threads_handler: Threads 處理器
+        """
+        self.config = config
+        self.db_handler = db_handler
+        self.time_controller = time_controller
+        self.content_generator = content_generator
+        self.threads_handler = threads_handler
+        self.logger = logging.getLogger(__name__)
+        self.running = False
+        self.shutdown_event = asyncio.Event()
+        self.max_posts_per_day = int(config.MAX_POSTS_PER_DAY)
+        
+    async def start(self):
+        """開始監控發文系統"""
+        try:
+            self.running = True
+            self.logger.info("========== 開始監控 Luna Threads 發文系統 ==========")
+            self.logger.info("每日最大發文數：%d", self.max_posts_per_day)
+            today_count = await self.db_handler.get_today_posts_count()
+            self.logger.info("目前今日發文計數：%d", today_count)
+
+            while self.running and not self.shutdown_event.is_set():
+                try:
+                    # 檢查是否達到每日發文上限
+                    current_post_count = await self.db_handler.get_today_posts_count()
+                    if current_post_count >= self.max_posts_per_day:
+                        self.logger.info("已達到每日發文上限 (%d/%d)", current_post_count, self.max_posts_per_day)
+                        # 等待一段時間後再檢查
+                        await asyncio.sleep(1800)  # 30分鐘
+                        continue
+                    
+                    self.logger.info("正在進行新一輪發文檢查...")
+                    
+                    # 取得下一篇要發布的文章
+                    self.logger.info("正在生成發文內容...")
+                    content = await self.content_generator.get_content()
+                    
+                    if content is None or not content.strip():
+                        self.logger.warning("無法生成有效的文章內容")
+                        await asyncio.sleep(300)  # 休息5分鐘後再試
+                        continue
+                    
+                    # 發布文章
+                    self.logger.info("正在發布文章...")
+                    self.logger.info("文章內容: %s", content)
+                    post_id = await self.threads_handler.post(content)
+                    
+                    if post_id:
+                        # 儲存發文記錄
+                        self.logger.info("發文成功，ID: %s", post_id)
+                        await self.db_handler.save_post({
+                            "post_id": post_id,
+                            "content": content,
+                            "timestamp": datetime.now(),
+                            "status": "published"
+                        })
+                        
+                        # 儲存文章內容
+                        await self.db_handler.save_article({
+                            "post_id": post_id,
+                            "content": content,
+                            "created_at": datetime.now()
+                        })
+                        
+                        # 計算下次發文時間
+                        wait_seconds = self.time_controller.get_interval()
+                        next_time = self.time_controller.get_next_post_time()
+                        
+                        self.logger.info("下次發文時間: %s (等待 %d 秒)", 
+                                        next_time.strftime("%Y-%m-%d %H:%M:%S"), 
+                                        wait_seconds)
+                        
+                        # 等待到下一次發文時間
+                        await asyncio.sleep(wait_seconds)
+                    else:
+                        self.logger.error("發文失敗")
+                        # 失敗後等待一段時間再試
+                        await asyncio.sleep(600)  # 10分鐘
+
+                except Exception as e:
+                    self.logger.error("發文過程發生錯誤：%s", str(e), exc_info=True)
+                    # 遇到錯誤時等待一段時間
+                    await asyncio.sleep(600)  # 10分鐘
+            
+            self.logger.info("監控器循環已結束")
+            
+        except Exception as e:
+            self.logger.error("監控系統發生嚴重錯誤：%s", str(e), exc_info=True)
+            raise
+        finally:
+            self.logger.info("========== Luna Threads 監控器已停止 ==========")
+            
+    async def stop(self):
+        """停止監控"""
+        self.logger.info("接收到停止監控命令")
+        self.running = False
+        self.shutdown_event.set()
+        self.logger.info("已設置關閉信號，等待監控器循環結束") 

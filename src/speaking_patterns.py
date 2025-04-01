@@ -29,6 +29,14 @@ class SpeakingPatterns:
         self.logger = logging.getLogger(__name__)
         self.db = None  # 資料庫處理器會在後續設置
         
+        # 追蹤模式變更狀態
+        self.patterns_modified = {
+            "speaking_styles": False,
+            "topics_keywords": False,
+            "sentiment_dict": False,
+            "time_specific_patterns": False
+        }
+        
         # 輔助函數：清理環境變數值中的註釋
         def clean_env(env_name, default_value):
             value = os.getenv(env_name, default_value)
@@ -342,29 +350,36 @@ class SpeakingPatterns:
             return
             
         try:
-            # 獲取說話風格
-            speaking_styles_data = await self.db.database.get_speaking_pattern("speaking_styles")
-            if speaking_styles_data and "styles" in speaking_styles_data:
-                self.speaking_styles = speaking_styles_data["styles"]
+            # 一次性獲取所有模式類型（優化資料庫查詢次數）
+            pattern_types = ["speaking_styles", "topics_keywords", "sentiment_dict", "time_specific_patterns"]
+            
+            # 使用批量獲取函數
+            patterns_data = await self.db.bulk_get_speaking_patterns(pattern_types)
+            
+            if not patterns_data:
+                self.logger.warning("從資料庫載入模式資料失敗，使用預設值")
+                return
+                
+            # 處理獲取到的數據
+            if "speaking_styles" in patterns_data and "styles" in patterns_data["speaking_styles"]:
+                self.speaking_styles = patterns_data["speaking_styles"]["styles"]
                 self.logger.info("從資料庫載入說話風格成功")
                 
-            # 獲取主題關鍵詞
-            topics_data = await self.db.database.get_speaking_pattern("topics_keywords")
-            if topics_data and "keywords" in topics_data:
-                self.topics_keywords = topics_data["keywords"]
+            if "topics_keywords" in patterns_data and "keywords" in patterns_data["topics_keywords"]:
+                self.topics_keywords = patterns_data["topics_keywords"]["keywords"]
                 self.logger.info("從資料庫載入主題關鍵詞成功")
                 
-            # 獲取情感詞典
-            sentiment_data = await self.db.database.get_speaking_pattern("sentiment_dict")
-            if sentiment_data and "sentiments" in sentiment_data:
-                self.sentiment_dict = sentiment_data["sentiments"]
+            if "sentiment_dict" in patterns_data and "sentiments" in patterns_data["sentiment_dict"]:
+                self.sentiment_dict = patterns_data["sentiment_dict"]["sentiments"]
                 self.logger.info("從資料庫載入情感詞典成功")
                 
-            # 獲取時間特定模式
-            time_data = await self.db.database.get_speaking_pattern("time_specific_patterns")
-            if time_data and "patterns" in time_data:
-                self.time_specific_patterns = time_data["patterns"]
+            if "time_specific_patterns" in patterns_data and "patterns" in patterns_data["time_specific_patterns"]:
+                self.time_specific_patterns = patterns_data["time_specific_patterns"]["patterns"]
                 self.logger.info("從資料庫載入時間特定模式成功")
+            
+            # 重置變更狀態
+            for key in self.patterns_modified:
+                self.patterns_modified[key] = False
                 
         except Exception as e:
             self.logger.error(f"從資料庫載入說話模式失敗：{str(e)}")
@@ -377,31 +392,41 @@ class SpeakingPatterns:
             return
             
         try:
-            # 保存說話風格
-            await self.db.database.save_speaking_pattern(
-                "speaking_styles", 
-                {"styles": self.speaking_styles}
-            )
+            # 只保存已修改的模式
+            save_count = 0
+            patterns_to_save = {}
             
-            # 保存主題關鍵詞
-            await self.db.database.save_speaking_pattern(
-                "topics_keywords", 
-                {"keywords": self.topics_keywords}
-            )
+            if self.patterns_modified["speaking_styles"]:
+                patterns_to_save["speaking_styles"] = {"styles": self.speaking_styles}
+                save_count += 1
+                
+            if self.patterns_modified["topics_keywords"]:
+                patterns_to_save["topics_keywords"] = {"keywords": self.topics_keywords}
+                save_count += 1
+                
+            if self.patterns_modified["sentiment_dict"]:
+                patterns_to_save["sentiment_dict"] = {"sentiments": self.sentiment_dict}
+                save_count += 1
+                
+            if self.patterns_modified["time_specific_patterns"]:
+                patterns_to_save["time_specific_patterns"] = {"patterns": self.time_specific_patterns}
+                save_count += 1
             
-            # 保存情感詞典
-            await self.db.database.save_speaking_pattern(
-                "sentiment_dict", 
-                {"sentiments": self.sentiment_dict}
-            )
-            
-            # 保存時間特定模式
-            await self.db.database.save_speaking_pattern(
-                "time_specific_patterns", 
-                {"patterns": self.time_specific_patterns}
-            )
-            
-            self.logger.info("說話模式已成功保存到資料庫")
+            if save_count > 0:
+                # 使用批量保存函數
+                success = await self.db.bulk_save_speaking_patterns(patterns_to_save)
+                
+                if success:
+                    # 重置修改狀態
+                    for key in self.patterns_modified:
+                        if key in patterns_to_save:
+                            self.patterns_modified[key] = False
+                            
+                    self.logger.info(f"說話模式已成功保存到資料庫，更新了{save_count}種模式")
+                else:
+                    self.logger.warning("部分說話模式保存失敗，請稍後重試")
+            else:
+                self.logger.debug("說話模式未變更，不需要保存到資料庫")
             
         except Exception as e:
             self.logger.error(f"保存說話模式到資料庫失敗：{str(e)}")
@@ -440,6 +465,8 @@ class SpeakingPatterns:
                 
             # 添加模式
             self.speaking_styles[context][category].append(pattern)
+            # 標記為已修改
+            self.patterns_modified["speaking_styles"] = True
             
             # 保存到資料庫
             if self.db:

@@ -254,3 +254,61 @@ class DatabaseHandler:
         except Exception as e:
             self.logger.error(f"獲取最近文章時發生錯誤: {str(e)}")
             return [] 
+
+    async def bulk_get_speaking_patterns(self, pattern_types: list) -> Dict[str, Any]:
+        """批量獲取說話模式
+        
+        Args:
+            pattern_types: 模式類型列表，如 ["speaking_styles", "topics_keywords"]
+            
+        Returns:
+            Dict[str, Any]: 模式數據字典，鍵為模式類型
+        """
+        try:
+            result = {}
+            # 使用資料庫的批量查詢功能
+            if hasattr(self.database, 'bulk_get_speaking_patterns'):
+                return await self.database.bulk_get_speaking_patterns(pattern_types)
+            
+            # 無批量查詢功能時的兼容處理
+            for pattern_type in pattern_types:
+                try:
+                    pattern = await self.database.get_speaking_pattern(pattern_type)
+                    if pattern:
+                        result[pattern_type] = pattern
+                except Exception as e:
+                    self.logger.error(f"獲取說話模式 {pattern_type} 時發生錯誤：{str(e)}")
+            
+            return result
+        except Exception as e:
+            self.logger.error(f"批量獲取說話模式時發生錯誤：{str(e)}")
+            return {}
+            
+    async def bulk_save_speaking_patterns(self, patterns_data: Dict[str, Any]) -> bool:
+        """批量保存說話模式
+        
+        Args:
+            patterns_data: 模式數據字典，鍵為模式類型，值為數據
+            
+        Returns:
+            bool: 是否全部保存成功
+        """
+        try:
+            # 使用資料庫的批量保存功能
+            if hasattr(self.database, 'bulk_save_speaking_patterns'):
+                return await self.database.bulk_save_speaking_patterns(patterns_data)
+            
+            # 無批量保存功能時的兼容處理
+            success_count = 0
+            for pattern_type, data in patterns_data.items():
+                try:
+                    await self.database.save_speaking_pattern(pattern_type, data)
+                    success_count += 1
+                except Exception as e:
+                    self.logger.error(f"保存說話模式 {pattern_type} 時發生錯誤：{str(e)}")
+            
+            self.logger.info(f"批量保存說話模式完成，成功 {success_count}/{len(patterns_data)}")
+            return success_count == len(patterns_data)
+        except Exception as e:
+            self.logger.error(f"批量保存說話模式時發生錯誤：{str(e)}")
+            return False 

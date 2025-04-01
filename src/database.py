@@ -25,6 +25,7 @@ import os
 from cachetools import TTLCache, LRUCache
 from src.exceptions import DatabaseError
 from src.performance_monitor import performance_monitor, track_performance
+from collections import defaultdict
 
 class Database:
     def __init__(self, config):
@@ -53,6 +54,116 @@ class Database:
         self.post_count_cache = TTLCache(maxsize=100, ttl=3600)  # 1小時過期
         self.article_cache = LRUCache(maxsize=1000)  # 最多保存1000篇文章
         self.personality_cache = TTLCache(maxsize=10, ttl=3600)  # 人設快取
+        self.pattern_cache = TTLCache(maxsize=20, ttl=3600)  # 說話模式快取，1小時過期
+        
+        # 資料庫流量統計
+        self.db_traffic_stats = {
+            "total_bytes_sent": 0,
+            "total_bytes_received": 0,
+            "read_operations": 0,
+            "write_operations": 0,
+            "cache_hit_count": 0,
+            "cache_miss_count": 0,
+            "collection_stats": defaultdict(lambda: {"reads": 0, "writes": 0, "bytes": 0}),
+            "start_time": datetime.now(pytz.UTC)
+        }
+        self.traffic_log_interval = int(os.getenv("DB_TRAFFIC_LOG_INTERVAL", "3600"))  # 默認每小時記錄一次
+        self.last_traffic_log_time = datetime.now(pytz.UTC)
+        
+        # 估算每種文檔的平均大小 (位元組)
+        self.doc_size_estimates = {
+            "posts": 2000,
+            "articles": 5000,
+            "personality_memories": 3000,
+            "speaking_patterns": 20000,
+            "user_history": 4000
+        }
+        
+    def _log_traffic_stats(self, force=False):
+        """記錄資料庫流量統計
+        
+        Args:
+            force: 是否強制記錄，即使未到記錄間隔
+        """
+        now = datetime.now(pytz.UTC)
+        time_elapsed = (now - self.last_traffic_log_time).total_seconds()
+        
+        if force or time_elapsed >= self.traffic_log_interval:
+            # 計算時間區間
+            duration = now - self.db_traffic_stats["start_time"]
+            duration_str = str(duration).split('.')[0]  # 去除微秒部分
+            
+            # 生成流量報告
+            total_operations = self.db_traffic_stats["read_operations"] + self.db_traffic_stats["write_operations"]
+            cache_hit_rate = 0
+            if self.db_traffic_stats["cache_hit_count"] + self.db_traffic_stats["cache_miss_count"] > 0:
+                cache_hit_rate = self.db_traffic_stats["cache_hit_count"] / (
+                    self.db_traffic_stats["cache_hit_count"] + self.db_traffic_stats["cache_miss_count"]
+                ) * 100
+                
+            # 格式化流量為可讀格式
+            def format_bytes(bytes_count):
+                if bytes_count < 1024:
+                    return f"{bytes_count} B"
+                elif bytes_count < 1024 * 1024:
+                    return f"{bytes_count/1024:.2f} KB"
+                else:
+                    return f"{bytes_count/(1024*1024):.2f} MB"
+            
+            # 生成報告
+            report = [
+                f"【資料庫流量統計】時間區間: {duration_str}",
+                f"總操作數: {total_operations} (讀取: {self.db_traffic_stats['read_operations']}, 寫入: {self.db_traffic_stats['write_operations']})",
+                f"資料傳輸: 發送={format_bytes(self.db_traffic_stats['total_bytes_sent'])}, 接收={format_bytes(self.db_traffic_stats['total_bytes_received'])}",
+                f"快取命中率: {cache_hit_rate:.2f}%",
+                "各集合存取統計:"
+            ]
+            
+            # 添加集合統計
+            for collection, stats in self.db_traffic_stats["collection_stats"].items():
+                report.append(f"  - {collection}: 讀取={stats['reads']}, 寫入={stats['writes']}, 流量={format_bytes(stats['bytes'])}")
+            
+            # 輸出報告
+            for line in report:
+                self.logger.info(line)
+            
+            # 重置部分統計
+            self.db_traffic_stats["start_time"] = now
+            self.last_traffic_log_time = now
+            
+    def _record_db_access(self, collection: str, operation_type: str, doc_count: int = 1, is_cache_hit: bool = False):
+        """記錄資料庫存取操作
+        
+        Args:
+            collection: 集合名稱
+            operation_type: 操作類型 (read/write)
+            doc_count: 文檔數量
+            is_cache_hit: 是否命中快取
+        """
+        # 估算文檔大小
+        doc_size = self.doc_size_estimates.get(collection, 1000)  # 默認1KB
+        total_size = doc_size * doc_count
+        
+        # 更新統計資料
+        if operation_type == "read":
+            self.db_traffic_stats["read_operations"] += 1
+            self.db_traffic_stats["total_bytes_received"] += total_size
+            self.db_traffic_stats["collection_stats"][collection]["reads"] += 1
+            self.db_traffic_stats["collection_stats"][collection]["bytes"] += total_size
+            
+            if is_cache_hit:
+                self.db_traffic_stats["cache_hit_count"] += 1
+            else:
+                self.db_traffic_stats["cache_miss_count"] += 1
+                
+        elif operation_type == "write":
+            self.db_traffic_stats["write_operations"] += 1
+            self.db_traffic_stats["total_bytes_sent"] += total_size
+            self.db_traffic_stats["collection_stats"][collection]["writes"] += 1
+            self.db_traffic_stats["collection_stats"][collection]["bytes"] += total_size
+            
+        # 檢查是否需要記錄統計
+        self._log_traffic_stats()
         
     @track_performance("db_initialize")
     async def initialize(self):
@@ -94,6 +205,9 @@ class Database:
         """關閉資料庫連接"""
         if self.client:
             try:
+                # 記錄最終的流量統計
+                self._log_traffic_stats(force=True)
+                
                 self.client.close()
                 self.logger.info("資料庫連接已關閉")
             except Exception as e:
@@ -228,7 +342,9 @@ class Database:
         try:
             # 檢查快取
             if post_id in self.posts_cache:
-                self.performance_monitor.record_db_operation("query", True, True)
+                self.performance_monitor.record_db_operation("query", True, from_cache=True,
+                                                          collection="posts", query=f"find_one(post_id={post_id})")
+                self._record_db_access("posts", "read", is_cache_hit=True)
                 return self.posts_cache[post_id]
                 
             if self.client is None:
@@ -239,15 +355,20 @@ class Database:
             if post:
                 # 更新快取
                 self.posts_cache[post_id] = post
-                self.performance_monitor.record_db_operation("query", True, False)
+                self.performance_monitor.record_db_operation("query", True, from_cache=False,
+                                                          collection="posts", query=f"find_one(post_id={post_id})")
+                self._record_db_access("posts", "read")
             else:
-                self.performance_monitor.record_db_operation("query", True, False)
+                self.performance_monitor.record_db_operation("query", True, from_cache=False,
+                                                          collection="posts", query=f"find_one(post_id={post_id})")
+                self._record_db_access("posts", "read", doc_count=0)  # 雖然未找到文檔，但仍計為一次讀取操作
                 
             return post
             
         except Exception as e:
             self.logger.error("獲取發文資料失敗：%s", str(e))
-            self.performance_monitor.record_db_operation("query", False)
+            self.performance_monitor.record_db_operation("query", False, collection="posts", 
+                                                       query=f"find_one(post_id={post_id})")
             return None
             
     @track_performance("db_get_recent_posts")
@@ -271,12 +392,14 @@ class Database:
             for post in posts:
                 self.posts_cache[post["post_id"]] = post
                 
-            self.performance_monitor.record_db_operation("query", True, False)
+            self.performance_monitor.record_db_operation("query", True, from_cache=False,
+                                                      collection="posts", query=f"find().sort().limit({limit})")
             return posts
             
         except Exception as e:
             self.logger.error("獲取最近發文列表失敗：%s", str(e))
-            self.performance_monitor.record_db_operation("query", False)
+            self.performance_monitor.record_db_operation("query", False, collection="posts",
+                                                       query=f"find().sort().limit({limit})")
             return []
             
     @track_performance("db_clear_cache")
@@ -287,6 +410,7 @@ class Database:
         self.post_count_cache.clear()
         self.article_cache.clear()
         self.personality_cache.clear()
+        self.pattern_cache.clear()
         self.logger.info("快取已清除")
 
     @track_performance("db_get_personality_memory")
@@ -302,7 +426,7 @@ class Database:
         try:
             # 檢查快取
             if context in self.personality_cache:
-                self.performance_monitor.record_db_operation("query", True, True)
+                self.performance_monitor.record_db_operation("query", True, from_cache=True)
                 return self.personality_cache[context]
                 
             # 查詢資料庫
@@ -311,9 +435,9 @@ class Database:
             # 更新快取
             if memory:
                 self.personality_cache[context] = memory
-                self.performance_monitor.record_db_operation("query", True, False)
+                self.performance_monitor.record_db_operation("query", True, from_cache=False)
             else:
-                self.performance_monitor.record_db_operation("query", True, False)
+                self.performance_monitor.record_db_operation("query", True, from_cache=False)
                 
             return memory
             
@@ -359,10 +483,13 @@ class Database:
             await self.db.articles.insert_one(article)
             self.article_cache[article["post_id"]] = article
             self.logger.info(f"文章儲存成功：{article['post_id']}")
-            self.performance_monitor.record_db_operation("insert", True)
+            self.performance_monitor.record_db_operation("insert", True, collection="articles",
+                                                       query=f"insert_one(post_id={article['post_id']})")
+            self._record_db_access("articles", "write")
         except Exception as e:
             self.logger.error(f"儲存文章時發生錯誤：{str(e)}")
-            self.performance_monitor.record_db_operation("insert", False)
+            self.performance_monitor.record_db_operation("insert", False, collection="articles",
+                                                       query=f"insert_one(post_id={article['post_id']})")
             raise DatabaseError(f"儲存文章失敗：{str(e)}")
             
     @track_performance("db_get_article")
@@ -378,7 +505,9 @@ class Database:
         try:
             # 檢查快取
             if post_id in self.article_cache:
-                self.performance_monitor.record_db_operation("query", True, True)
+                self.performance_monitor.record_db_operation("query", True, from_cache=True,
+                                                          collection="articles", query=f"find_one(post_id={post_id})")
+                self._record_db_access("articles", "read", is_cache_hit=True)
                 return self.article_cache[post_id]
                 
             # 查詢資料庫
@@ -387,15 +516,20 @@ class Database:
             # 更新快取
             if article:
                 self.article_cache[post_id] = article
-                self.performance_monitor.record_db_operation("query", True, False)
+                self.performance_monitor.record_db_operation("query", True, from_cache=False,
+                                                          collection="articles", query=f"find_one(post_id={post_id})")
+                self._record_db_access("articles", "read")
             else:
-                self.performance_monitor.record_db_operation("query", True, False)
+                self.performance_monitor.record_db_operation("query", True, from_cache=False,
+                                                          collection="articles", query=f"find_one(post_id={post_id})")
+                self._record_db_access("articles", "read", doc_count=0)
                 
             return article
             
         except Exception as e:
             self.logger.error(f"獲取文章時發生錯誤：{str(e)}")
-            self.performance_monitor.record_db_operation("query", False)
+            self.performance_monitor.record_db_operation("query", False, collection="articles",
+                                                       query=f"find_one(post_id={post_id})")
             raise DatabaseError(f"獲取文章失敗：{str(e)}")
             
     @track_performance("db_count_articles")
@@ -550,7 +684,21 @@ class Database:
             stats["cache"] = {
                 "posts_cache_size": len(self.posts_cache),
                 "article_cache_size": len(self.article_cache),
-                "personality_cache_size": len(self.personality_cache)
+                "personality_cache_size": len(self.personality_cache),
+                "pattern_cache_size": len(self.pattern_cache)
+            }
+            
+            # 流量統計
+            stats["traffic"] = {
+                "total_bytes_sent": self.db_traffic_stats["total_bytes_sent"],
+                "total_bytes_received": self.db_traffic_stats["total_bytes_received"],
+                "read_operations": self.db_traffic_stats["read_operations"],
+                "write_operations": self.db_traffic_stats["write_operations"],
+                "cache_hit_rate": (
+                    self.db_traffic_stats["cache_hit_count"] / (
+                        self.db_traffic_stats["cache_hit_count"] + self.db_traffic_stats["cache_miss_count"]
+                    ) * 100
+                ) if (self.db_traffic_stats["cache_hit_count"] + self.db_traffic_stats["cache_miss_count"]) > 0 else 0
             }
             
             # 性能監控器指標
@@ -580,12 +728,21 @@ class Database:
                 upsert=True
             )
             
+            # 更新快取
+            self.pattern_cache[pattern_type] = {
+                **data,
+                "updated_at": datetime.now(pytz.UTC)
+            }
+            
             self.logger.info(f"說話模式保存成功：{pattern_type}")
-            self.performance_monitor.record_db_operation("update", True)
+            self.performance_monitor.record_db_operation("update", True, collection="speaking_patterns",
+                                                       query=f"update_one(type={pattern_type})")
+            self._record_db_access("speaking_patterns", "write")
             
         except Exception as e:
             self.logger.error(f"保存說話模式時發生錯誤：{str(e)}")
-            self.performance_monitor.record_db_operation("update", False)
+            self.performance_monitor.record_db_operation("update", False, collection="speaking_patterns",
+                                                       query=f"update_one(type={pattern_type})")
             raise DatabaseError(f"保存說話模式失敗：{str(e)}")
             
     @track_performance("db_get_speaking_pattern")
@@ -599,17 +756,170 @@ class Database:
             Optional[Dict[str, Any]]: 模式數據，如果不存在則返回 None
         """
         try:
+            # 檢查快取
+            if pattern_type in self.pattern_cache:
+                self.performance_monitor.record_db_operation("query", True, from_cache=True,
+                                                          collection="speaking_patterns", query=f"find_one(type={pattern_type})")
+                self._record_db_access("speaking_patterns", "read", is_cache_hit=True)
+                return self.pattern_cache[pattern_type]
+                
             # 查詢資料庫
             pattern = await self.db.speaking_patterns.find_one({"type": pattern_type})
             
+            # 更新快取
             if pattern:
-                self.performance_monitor.record_db_operation("query", True, False)
+                self.pattern_cache[pattern_type] = pattern
+                self.performance_monitor.record_db_operation("query", True, from_cache=False,
+                                                          collection="speaking_patterns", query=f"find_one(type={pattern_type})")
+                self._record_db_access("speaking_patterns", "read")
             else:
-                self.performance_monitor.record_db_operation("query", True, False)
+                self.performance_monitor.record_db_operation("query", True, from_cache=False,
+                                                          collection="speaking_patterns", query=f"find_one(type={pattern_type})")
+                self._record_db_access("speaking_patterns", "read", doc_count=0)
                 
             return pattern
             
         except Exception as e:
             self.logger.error(f"獲取說話模式時發生錯誤：{str(e)}")
-            self.performance_monitor.record_db_operation("query", False)
+            self.performance_monitor.record_db_operation("query", False, collection="speaking_patterns",
+                                                       query=f"find_one(type={pattern_type})")
             raise DatabaseError(f"獲取說話模式失敗：{str(e)}")
+            
+    @track_performance("db_bulk_get_speaking_patterns")
+    async def bulk_get_speaking_patterns(self, pattern_types: list) -> Dict[str, Any]:
+        """批量獲取說話模式
+        
+        Args:
+            pattern_types: 模式類型列表
+            
+        Returns:
+            Dict[str, Any]: 模式數據字典
+        """
+        try:
+            self.performance_monitor.start_operation("db_bulk_get_speaking_patterns")
+            result = {}
+            
+            # 先檢查快取
+            cache_hits = 0
+            remaining_types = []
+            
+            for pattern_type in pattern_types:
+                if pattern_type in self.pattern_cache:
+                    result[pattern_type] = self.pattern_cache[pattern_type]
+                    cache_hits += 1
+                else:
+                    remaining_types.append(pattern_type)
+            
+            # 如果全部命中快取，直接返回
+            if not remaining_types:
+                self.performance_monitor.record_db_operation("query", True, from_cache=True, count=len(pattern_types),
+                                                          collection="speaking_patterns", query=f"bulk_get(types={pattern_types})")
+                self._record_db_access("speaking_patterns", "read", doc_count=len(pattern_types), is_cache_hit=True)
+                return result
+            
+            # 批量查詢剩餘類型
+            if self.client is None:
+                await self.initialize()
+                
+            cursor = self.db.speaking_patterns.find({"type": {"$in": remaining_types}})
+            patterns = await cursor.to_list(length=None)
+            
+            # 更新結果和快取
+            for pattern in patterns:
+                pattern_type = pattern.get("type")
+                if pattern_type:
+                    result[pattern_type] = pattern
+                    self.pattern_cache[pattern_type] = pattern
+            
+            if cache_hits > 0:
+                self.performance_monitor.record_db_operation("query", True, from_cache=True, count=cache_hits,
+                                                          collection="speaking_patterns", query=f"bulk_get(cached_types={[t for t in pattern_types if t not in remaining_types]})")
+                self._record_db_access("speaking_patterns", "read", doc_count=cache_hits, is_cache_hit=True)
+            
+            db_hit_count = len(patterns)
+            if db_hit_count > 0:
+                self.performance_monitor.record_db_operation("query", True, from_cache=False, count=db_hit_count,
+                                                          collection="speaking_patterns", query=f"find(types_in={remaining_types})")
+                self._record_db_access("speaking_patterns", "read", doc_count=db_hit_count)
+            
+            miss_count = len(remaining_types) - db_hit_count
+            if miss_count > 0:
+                self.performance_monitor.record_db_operation("query", False, from_cache=False, count=miss_count,
+                                                          collection="speaking_patterns", query=f"missing_types={[t for t in remaining_types if t not in [p.get('type') for p in patterns]]}")
+                
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"批量獲取說話模式時發生錯誤：{str(e)}")
+            self.performance_monitor.record_db_operation("query", False, from_cache=False, count=len(pattern_types),
+                                                       collection="speaking_patterns", query=f"bulk_get(types={pattern_types})")
+            return {}
+        finally:
+            self.performance_monitor.end_operation("db_bulk_get_speaking_patterns")
+            
+    @track_performance("db_bulk_save_speaking_patterns")
+    async def bulk_save_speaking_patterns(self, patterns_data: Dict[str, Dict[str, Any]]) -> bool:
+        """批量保存說話模式
+        
+        Args:
+            patterns_data: 模式數據字典，鍵為模式類型，值為數據
+            
+        Returns:
+            bool: 是否全部保存成功
+        """
+        try:
+            self.performance_monitor.start_operation("db_bulk_save_speaking_patterns")
+            
+            if self.client is None:
+                await self.initialize()
+                
+            # 準備批量操作
+            operations = []
+            now = datetime.now(pytz.UTC)
+            
+            for pattern_type, data in patterns_data.items():
+                operations.append(
+                    motor.motor_asyncio.UpdateOne(
+                        {"type": pattern_type},
+                        {"$set": {
+                            **data,
+                            "updated_at": now
+                        }},
+                        upsert=True
+                    )
+                )
+                
+                # 更新快取
+                self.pattern_cache[pattern_type] = {
+                    **data,
+                    "type": pattern_type,
+                    "updated_at": now
+                }
+            
+            # 執行批量操作
+            if operations:
+                result = await self.db.speaking_patterns.bulk_write(operations)
+                success = (result.modified_count + result.upserted_count) == len(operations)
+                
+                if success:
+                    self.logger.info(f"成功批量保存 {len(operations)} 個說話模式")
+                    self.performance_monitor.record_db_operation("update", True, count=len(operations),
+                                                              collection="speaking_patterns", query=f"bulk_write({list(patterns_data.keys())})")
+                    self._record_db_access("speaking_patterns", "write", doc_count=len(operations))
+                else:
+                    self.logger.warning(f"批量保存說話模式部分失敗，成功 {result.modified_count + result.upserted_count}/{len(operations)}")
+                    self.performance_monitor.record_db_operation("update", False, count=len(operations),
+                                                              collection="speaking_patterns", query=f"bulk_write({list(patterns_data.keys())})")
+                    self._record_db_access("speaking_patterns", "write", doc_count=result.modified_count + result.upserted_count)
+                
+                return success
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"批量保存說話模式時發生錯誤：{str(e)}")
+            self.performance_monitor.record_db_operation("update", False, count=len(patterns_data),
+                                                       collection="speaking_patterns", query=f"bulk_write({list(patterns_data.keys())})")
+            return False
+        finally:
+            self.performance_monitor.end_operation("db_bulk_save_speaking_patterns")

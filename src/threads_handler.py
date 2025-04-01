@@ -27,13 +27,17 @@ from src.performance_monitor import performance_monitor, track_performance
 class ThreadsHandler:
     """Threads 處理器類別，負責管理與 Threads 平台的互動"""
     
-    def __init__(self, api: ThreadsAPI, session: aiohttp.ClientSession):
+    def __init__(self, config=None, api=None, db_handler=None, session=None):
         """初始化 Threads 處理器
         
         Args:
+            config: 設定物件
             api: ThreadsAPI 實例
+            db_handler: 資料庫處理器
             session: HTTP 會話
         """
+        self.config = config
+        self.db_handler = db_handler
         self.api = api
         self.session = session
         self.logger = logging.getLogger(__name__)
@@ -111,6 +115,17 @@ class ThreadsHandler:
             self.logger.error("發文時發生錯誤：%s", str(e))
             self.performance_monitor.record_api_request("threads", success=False)
             return None
+            
+    async def post(self, content: str) -> Optional[str]:
+        """發布文章到 Threads (post_content的別名)
+        
+        Args:
+            content: 要發布的文章內容
+            
+        Returns:
+            Optional[str]: 成功時返回文章ID，失敗時返回 None
+        """
+        return await self.post_content(content)
             
     @track_performance("get_post")
     async def get_post(self, post_id: str) -> Optional[Dict[str, Any]]:

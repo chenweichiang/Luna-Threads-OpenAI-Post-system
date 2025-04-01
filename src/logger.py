@@ -169,12 +169,20 @@ class LoggerSetup:
         aiohttp_logger = logging.getLogger('aiohttp.client')
         aiohttp_logger.setLevel(logging.INFO)
 
-def setup_logger(config: Config):
-    """設定日誌系統
+def setup_logger(name=None):
+    """設定日誌系統並返回一個已配置的logger
     
     Args:
-        config: 設定物件
+        name: 日誌器名稱，如果為None則使用根日誌器
+        
+    Returns:
+        logging.Logger: 已配置的日誌器
     """
+    # 確保日誌目錄存在
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'logs')
+    if not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+    
     # 設定日誌格式
     log_format = logging.Formatter(
         '【%(levelname)s】 %(asctime)s | %(message)s',
@@ -183,7 +191,7 @@ def setup_logger(config: Config):
     
     # 設定檔案處理器
     file_handler = logging.FileHandler(
-        filename=os.path.join('logs', 'app.log'),
+        filename=os.path.join(log_dir, 'app.log'),
         encoding='utf-8'
     )
     file_handler.setFormatter(log_format)
@@ -192,11 +200,17 @@ def setup_logger(config: Config):
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(log_format)
     
-    # 設定根日誌記錄器
-    root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
-    root_logger.addHandler(file_handler)
-    root_logger.addHandler(console_handler)
+    # 獲取或建立日誌記錄器
+    if name:
+        logger = logging.getLogger(name)
+    else:
+        logger = logging.getLogger()
+        
+    # 避免重複添加處理器
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
     
     # 關閉 aiohttp 的訪問日誌
     logging.getLogger('aiohttp.access').setLevel(logging.WARNING)
@@ -204,6 +218,8 @@ def setup_logger(config: Config):
     # 自定義 aiohttp 的客戶端日誌格式
     aiohttp_logger = logging.getLogger('aiohttp.client')
     aiohttp_logger.setLevel(logging.INFO)
+    
+    return logger
 
 # 使用根記錄器
 def log_info(message: str):
