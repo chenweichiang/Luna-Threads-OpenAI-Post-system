@@ -51,6 +51,7 @@ class ContentGenerator:
         self.timezone = pytz.timezone("Asia/Taipei")
         self.performance_monitor = performance_monitor
         self.speaking_patterns = None  # 將在 main.py 中設置
+        self.threads_handler = None  # 將在 main.py 中設置
         
         # 內容快取，用於避免短時間內生成重複內容
         self.content_cache = TTLCache(maxsize=100, ttl=3600 * 24)  # 24小時快取
@@ -495,4 +496,13 @@ class ContentGenerator:
             "api_stats": self.performance_monitor.api_stats.get("openai", {})
         }
         
-        return stats 
+        return stats
+
+    def set_threads_handler(self, threads_handler):
+        """設置 Threads 處理器
+        
+        Args:
+            threads_handler: Threads 處理器實例
+        """
+        self.threads_handler = threads_handler
+        self.logger.info("已設置 Threads 處理器") 

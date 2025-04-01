@@ -43,6 +43,14 @@ class ThreadsAPI:
             bool: 是否初始化成功
         """
         try:
+            # 確保 session 存在
+            if self.session is None:
+                self.logger.info("Session不存在，創建新session")
+                self.session = aiohttp.ClientSession(headers={
+                    "Authorization": f"Bearer {self.access_token}",
+                    "Content-Type": "application/json"
+                })
+            
             # 測試連接
             async with self.session.get(
                 f"{self.base_url}/{self.user_id}",

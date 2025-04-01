@@ -187,17 +187,19 @@ class AIError(Exception):
 
 class AIHandler:
     """AI 處理器"""
-    def __init__(self, api_key: str, session: aiohttp.ClientSession, db_handler):
+    def __init__(self, api_key: str, session: aiohttp.ClientSession, db_handler, config=None):
         """初始化 AI 處理器
         
         Args:
             api_key: OpenAI API 金鑰
             session: HTTP 客戶端 session
             db_handler: 資料庫處理器
+            config: 配置對象
         """
         self.api_key = api_key
         self.session = session
         self.db = db_handler
+        self.config = config
         self.logger = logging.getLogger(__name__)
         self.model = os.getenv("OPENAI_MODEL", "gpt-4-turbo-preview")
         self.performance_monitor = performance_monitor
@@ -477,7 +479,11 @@ class AIHandler:
                     await self._log_token_usage(response, start_time)
                     
                     text = response.choices[0].message.content
-                    cleaned_text = sanitize_text(text, self.config.CHARACTER_CONFIG["回文規則"]["字數限制"])
+                    # 使用安全的字數限制（如果config不可用）
+                    char_limit = 280
+                    if self.config and hasattr(self.config, 'CHARACTER_CONFIG'):
+                        char_limit = self.config.CHARACTER_CONFIG["回文規則"]["字數限制"]
+                    cleaned_text = sanitize_text(text, char_limit)
                     
                     if not await self._is_complete_sentence(cleaned_text):
                         self.logger.warning(f"生成的文本不完整，重試第 {retry_count + 1} 次")
@@ -706,11 +712,16 @@ class AIHandler:
         """
         if not text:
             return []
-            
+        
         topics = []
         
+        # 安全地獲取興趣列表
+        interests = []
+        if self.config and hasattr(self.config, 'CHARACTER_CONFIG'):
+            interests = self.config.CHARACTER_CONFIG["基本資料"]["興趣"]
+        
         # 檢查基本興趣相關主題
-        for interest in self.config.CHARACTER_CONFIG["基本資料"]["興趣"]:
+        for interest in interests:
             if interest.lower() in text.lower():
                 topics.append(interest)
         
@@ -1038,8 +1049,12 @@ class AIHandler:
             ])
         
         # 確保內容長度適中
-        if len(content) > self.config.MAX_RESPONSE_LENGTH:
-            content = content[:self.config.MAX_RESPONSE_LENGTH]
+        max_length = 280  # 預設長度限制
+        if self.config and hasattr(self.config, 'MAX_RESPONSE_LENGTH'):
+            max_length = self.config.MAX_RESPONSE_LENGTH
+        
+        if len(content) > max_length:
+            content = content[:max_length]
         
         # 確保結尾有適當的標點符號
         if not any(content.endswith(p) for p in ['！', '？', '。', '～']):
