@@ -619,3 +619,119 @@ MIT 授權允許您自由使用、修改和分發本專案，無論是商業還�
    - 檢查 API 金鑰是否有效
    - 確認 API 使用額度是否充足
    - 查看 OpenAI 服務狀態
+
+## 最新更新（v1.2.1）- 2025.04.02
+
+### 發文時間與頻率優化
+- **夜間集中發文**：系統現在會在晚上20:00至凌晨2:00之間集中發文，配合目標受眾的活躍時段
+- **降低發文頻率**：每日發文次數調整為3-5次，避免過度發文造成的互動疲勞
+- **黃金時段發文**：優先在晚間21:00至凌晨1:00的黃金時段發文，提高互動率
+- **智能發文計劃**：系統會在指定時間範圍內自動生成均勻分布的發文計劃，確保最佳發文體驗
+
+### 技術改進
+- **跨日時間處理**：優化跨日發文時間的處理邏輯，確保凌晨時段的發文正常進行
+- **時間分段算法**：實現智能時間分段，使發文時間點在夜間時段內均勻分布
+- **發文計數追蹤**：改進發文計數機制，精確控制每日發文數量
+- **GitHub Actions整合**：更新GitHub Actions工作流程，配合新的發文時間設定自動運行
+
+# English
+
+## System Overview
+ThreadsPoster is a Python-based automation system for intelligent content publishing and interaction on the Threads platform. The system uses OpenAI's GPT models to generate content and implements character settings to create a realistic persona interaction experience.
+
+## Key Features
+- Automated post generation and publishing
+- Intelligent replies to other users' interactions
+- Memory system tracking interaction history
+- Theme continuity management
+- Sentiment analysis and response adjustment
+- Dynamic posting time management
+- Character memory system
+- Performance monitoring and analysis
+- Resource usage optimization
+
+## Latest Update (v1.2.1) - 2025.04.02
+
+### Posting Time and Frequency Optimization
+- **Evening-focused Posting**: The system now concentrates posts between 8:00 PM and 2:00 AM, aligning with target audience active hours
+- **Reduced Posting Frequency**: Daily post count adjusted to 3-5 posts, preventing interaction fatigue from excessive posting
+- **Prime Time Posting**: Prioritizes posting during prime time (9:00 PM to 1:00 AM) to maximize engagement
+- **Smart Posting Schedule**: Automatically generates evenly distributed posting plans within specified timeframes
+
+### Technical Improvements
+- **Cross-day Time Handling**: Enhanced logic for handling posting times that span across midnight
+- **Time Segmentation Algorithm**: Implemented intelligent time segmentation for evenly distributed posting times
+- **Post Count Tracking**: Improved post counting mechanism for precise control of daily post volume
+- **GitHub Actions Integration**: Updated GitHub Actions workflow to run automatically according to new posting time settings
+
+## Running on GitHub
+
+The system supports automatic running via GitHub Actions with the following features:
+
+1. **Optimized Schedule**
+   - Runs hourly during evening hours (8:00 PM to 2:00 AM local time)
+   - Automatically checks if current time falls within posting hours
+   - Intelligent post planning for optimal distribution
+
+2. **Smart Post Distribution**
+   - Creates daily posting plans with 3-5 evenly spaced posts
+   - Prioritizes prime engagement hours (9:00 PM to 1:00 AM)
+   - Adjusts plans based on results and engagement patterns
+
+3. **Easy Configuration**
+   - Edit `.github/workflows/main.yml` to customize posting schedule
+   - Configure environment variables to adjust posting frequency and timing
+   - Set time zones and posting windows according to your audience
+
+For complete setup instructions, see the GitHub Actions setup section below.
+
+# 日本語
+
+## システム概要
+ThreadsPosterは、Threadsプラットフォーム上でインテリジェントなコンテンツ投稿と対話を行うためのPythonベースの自動化システムです。このシステムはOpenAIのGPTモデルを使用してコンテンツを生成し、キャラクター設定を実装して現実的な人物対話体験を創出します。
+
+## 主な機能
+- 自動投稿生成と発行
+- 他のユーザーとの対話への知的応答
+- 対話履歴を追跡するメモリシステム
+- テーマの連続性管理
+- 感情分析と応答調整
+- 動的投稿時間管理
+- キャラクターメモリシステム
+- パフォーマンスモニタリングと分析
+- リソース使用最適化
+
+## 最新アップデート（v1.2.1）- 2025.04.02
+
+### 投稿時間と頻度の最適化
+- **夜間集中投稿**: システムは現在、夜20:00から深夜2:00の間に投稿を集中させ、ターゲットオーディエンスのアクティブ時間に合わせています
+- **投稿頻度の削減**: 毎日の投稿数を3〜5回に調整し、過剰な投稿によるインタラクション疲労を防止
+- **ゴールデンタイム投稿**: エンゲージメントを最大化するために、ゴールデンタイム（夜21:00から深夜1:00）の投稿を優先
+- **スマート投稿スケジュール**: 指定された時間枠内で均等に分散された投稿計画を自動生成
+
+### 技術的改善
+- **日をまたぐ時間処理**: 深夜をまたぐ投稿時間の処理ロジックを強化
+- **時間セグメント化アルゴリズム**: 均等に分散された投稿時間のためのインテリジェントな時間セグメント化を実装
+- **投稿カウント追跡**: 毎日の投稿量を正確にコントロールするための投稿カウントメカニズムの改善
+- **GitHub Actions統合**: 新しい投稿時間設定に従って自動的に実行するようにGitHub Actionsワークフローを更新
+
+## GitHubでの実行
+
+このシステムは次の機能でGitHub Actionsによる自動実行をサポートしています：
+
+1. **最適化されたスケジュール**
+   - 夕方の時間帯（現地時間20:00〜02:00）に毎時実行
+   - 現在の時間が投稿時間内かどうかを自動的にチェック
+   - 最適な配分のためのインテリジェントな投稿計画
+
+2. **スマート投稿分布**
+   - 3〜5つの均等に間隔をあけた投稿で毎日の投稿計画を作成
+   - 主要なエンゲージメント時間（21:00〜01:00）を優先
+   - 結果とエンゲージメントパターンに基づいて計画を調整
+
+3. **簡単な設定**
+   - `.github/workflows/main.yml`を編集して投稿スケジュールをカスタマイズ
+   - 投稿の頻度とタイミングを調整するための環境変数を設定
+   - オーディエンスに合わせてタイムゾーンと投稿ウィンドウを設定
+
+完全なセットアップ手順については、以下のGitHub Actionsセットアップセクションを参照してください。
