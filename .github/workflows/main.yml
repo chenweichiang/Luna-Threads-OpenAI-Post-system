@@ -2,7 +2,7 @@ name: ThreadsPoster 自動化工作流程
 
 on:
   schedule:
-    - cron: '*/30 * * * *'  # 每30分鐘執行一次
+    - cron: '0 12-18 * * *'  # 每日台灣時間20:00-02:00(UTC+8)範圍內每小時執行一次
   push:
     branches: [ main ]
     paths-ignore:
@@ -15,15 +15,18 @@ env:
   PYTHON_VERSION: "3.11"
   TIMEZONE: "Asia/Taipei"
   LOG_LEVEL: "INFO"
-  MAX_POSTS_PER_DAY: "40"
+  MAX_POSTS_PER_DAY: "5"  # 每日最大發文數，與代碼中的設定一致
   MAX_MEMORY_USAGE: "80"  # 最大記憶體使用百分比
   EXECUTION_TIMEOUT: "1200"  # 執行超時時間（秒）
-  POSTING_HOURS_START: "7"  # 發文開始時間（24小時制）
-  POSTING_HOURS_END: "23"  # 發文結束時間（24小時制）
+  POSTING_HOURS_START: "20"  # 發文開始時間（24小時制）
+  POSTING_HOURS_END: "26"  # 發文結束時間（24+2小時制，表示凌晨2點）
+  PRIME_TIME_EVENING_START: "21"  # 黃金時段開始時間
+  PRIME_TIME_EVENING_END: "25"  # 黃金時段結束時間（24+1小時制，表示凌晨1點）
+  VERSION: "1.2.1"  # 當前版本號
 
 jobs:
   deploy-and-run:
-    name: 部署與運行 ThreadsPoster
+    name: 部署與運行 ThreadsPoster v1.2.1
     runs-on: ubuntu-latest
     timeout-minutes: 30
     
@@ -71,8 +74,21 @@ jobs:
           DEBUG=False
           MAX_POSTS_PER_DAY=${{ env.MAX_POSTS_PER_DAY }}
           MAX_MEMORY_USAGE=${{ env.MAX_MEMORY_USAGE }}
+          
+          # 發文時間設定
           POSTING_HOURS_START=${{ env.POSTING_HOURS_START }}
           POSTING_HOURS_END=${{ env.POSTING_HOURS_END }}
+          PRIME_TIME_EVENING_START=${{ env.PRIME_TIME_EVENING_START }}
+          PRIME_TIME_EVENING_END=${{ env.PRIME_TIME_EVENING_END }}
+          
+          # 發文間隔設定
+          PRIME_TIME_MIN_INTERVAL=1800
+          PRIME_TIME_MAX_INTERVAL=3600
+          OTHER_TIME_MIN_INTERVAL=5400
+          OTHER_TIME_MAX_INTERVAL=10800
+          
+          # 系統版本
+          VERSION=${{ env.VERSION }}
           EOF
 
       - name: 檢查環境變數
@@ -91,7 +107,11 @@ jobs:
               "OPENAI_API_KEY",
               "THREADS_ACCESS_TOKEN",
               "THREADS_USER_ID",
-              "MONGODB_URI"
+              "MONGODB_URI",
+              "POSTING_HOURS_START",
+              "POSTING_HOURS_END",
+              "PRIME_TIME_EVENING_START",
+              "PRIME_TIME_EVENING_END"
           ]
 
           missing_vars = []
@@ -230,29 +250,36 @@ jobs:
               hour = now.hour
               
               # 從環境變數獲取發文時間範圍
-              posting_start = int(os.getenv("POSTING_HOURS_START", "7"))
-              posting_end = int(os.getenv("POSTING_HOURS_END", "23"))
+              posting_start = int(os.getenv("POSTING_HOURS_START", "20"))
+              posting_end = int(os.getenv("POSTING_HOURS_END", "26"))
               
-              # 檢查是否在發文時間範圍內
-              if posting_start <= hour < posting_end:
-                  print(f"當前時間 {hour}:00 在發文時間範圍內")
-                  return True
+              # 處理跨日的發文時間範圍
+              if posting_end > 24:
+                  end_hour = posting_end - 24
+                  if posting_start <= hour < 24 or 0 <= hour < end_hour:
+                      print(f"當前時間 {hour}:00 在發文時間範圍內 (晚上{posting_start}:00-凌晨{end_hour}:00)")
+                      return True
               else:
-                  print(f"當前時間 {hour}:00 不在發文時間範圍內（{posting_start}:00-{posting_end}:00）")
-                  # 非發文時間直接退出，不啟動主程式
-                  sys.exit(0)
+                  if posting_start <= hour < posting_end:
+                      print(f"當前時間 {hour}:00 在發文時間範圍內 ({posting_start}:00-{posting_end}:00)")
+                      return True
+                      
+              print(f"當前時間 {hour}:00 不在發文時間範圍內 (晚上{posting_start}:00-凌晨{posting_end-24 if posting_end > 24 else posting_end}:00)")
+              return False
           
           # 檢查今日發文次數是否已達上限
           def check_post_count():
-              max_posts = int(os.getenv("MAX_POSTS_PER_DAY", "40"))
-              print(f"今日最大發文次數: {max_posts}")
-              
-              # 註：這裡只做簡單檢查，實際發文次數控制由程式內部處理
+              max_posts = int(os.getenv("MAX_POSTS_PER_DAY", "5"))
+              print(f"今日最大發文次數: {max_posts} (實際次數由系統內部控制為3-5次之間)")
               return True
           
           # 檢查是否可以發文
-          if not is_posting_time() or not check_post_count():
-              print("不符合發文條件，退出程式")
+          if not is_posting_time():
+              print("不在發文時間範圍內，退出程式")
+              sys.exit(0)
+              
+          if not check_post_count():
+              print("今日發文可能已達上限，退出程式")
               sys.exit(0)
           
           # 啟動主程式
@@ -290,7 +317,7 @@ jobs:
                                       process.kill()
                                       sys.exit(0)
                                   
-                                  if "今日發文已達上限" in content or "不在發文時間內" in content:
+                                  if "今日發文次數已達上限" in content or "不在允許發文範圍" in content:
                                       print("檢測到發文限制消息，結束程式")
                                       process.terminate()
                                       time.sleep(5)
@@ -334,6 +361,14 @@ jobs:
             # 提取發文結果
             echo "=== 發文結果 ==="
             grep "發文成功" logs/threads_poster.log || echo "未找到成功發文記錄"
+            
+            # 提取發文計劃
+            echo "=== 發文計劃信息 ==="
+            grep "已生成每日發文計劃" logs/threads_poster.log || echo "未找到發文計劃"
+            
+            # 提取等待信息
+            echo "=== 等待信息 ==="
+            grep "等待下次發文時間" logs/threads_poster.log | tail -n 5 || echo "未找到等待信息"
           else
             echo "找不到日誌文件"
             # 顯示當前目錄下的所有文件
@@ -347,7 +382,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: threadsposter-logs
+          name: threadsposter-logs-v1.2.1
           path: |
             logs/*.log
             *.log
