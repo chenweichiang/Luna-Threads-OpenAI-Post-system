@@ -1,17 +1,18 @@
 """
-Version: 2025.03.31 (v1.1.9)
+Version: 2025.04.02 (v1.2.1)
 Author: ThreadsPoster Team
 Description: 監控器類別，負責協調系統運行
 Copyright (c) 2025 Chiang, Chenwei. All rights reserved.
 License: MIT License
-Last Modified: 2025.03.31
+Last Modified: 2025.04.02
 Changes:
 - 實現基本監控功能
 - 加強錯誤處理
 - 改進日誌記錄
 - 加入 AI 處理器支援
 - 優化發文內容日誌記錄，顯示完整文章
-- 提高發文上限以適應測試需求
+- 調整發文上限為每日5次
+- 適配新的發文計劃系統
 """
 
 import logging
@@ -37,7 +38,7 @@ class Monitor:
         content_generator: ContentGenerator,
         time_controller: TimeController,
         ai_handler: AIHandler,
-        max_posts_per_day: int = 999
+        max_posts_per_day: int = 5
     ):
         """初始化監控器
         
@@ -170,7 +171,7 @@ class LunaThreadsMonitor:
         self.logger = logging.getLogger(__name__)
         self.running = False
         self.shutdown_event = asyncio.Event()
-        self.max_posts_per_day = int(config.MAX_POSTS_PER_DAY)
+        self.max_posts_per_day = 5  # 固定為每日最多5篇
         
     async def start(self):
         """開始監控發文系統"""
@@ -183,6 +184,25 @@ class LunaThreadsMonitor:
 
             while self.running and not self.shutdown_event.is_set():
                 try:
+                    # 檢查是否應該發文
+                    if not self.time_controller.should_post():
+                        # 取得等待時間
+                        wait_time = self.time_controller.get_wait_time()
+                        
+                        # 顯示等待信息
+                        if wait_time > 60:
+                            minutes = int(wait_time / 60)
+                            seconds = int(wait_time % 60)
+                            self.logger.info("等待下次發文時間 %d 分 %d 秒", minutes, seconds)
+                        else:
+                            self.logger.info("等待下次發文時間 %d 秒", int(wait_time))
+                            
+                        # 等待一段時間再檢查
+                        await asyncio.sleep(min(wait_time, 300))  # 最多等待5分鐘再檢查一次
+                        continue
+                    
+                    self.logger.info("正在進行新一輪發文檢查...")
+                    
                     # 檢查是否達到每日發文上限
                     current_post_count = await self.db_handler.get_today_posts_count()
                     if current_post_count >= self.max_posts_per_day:
@@ -190,8 +210,6 @@ class LunaThreadsMonitor:
                         # 等待一段時間後再檢查
                         await asyncio.sleep(1800)  # 30分鐘
                         continue
-                    
-                    self.logger.info("正在進行新一輪發文檢查...")
                     
                     # 取得下一篇要發布的文章
                     self.logger.info("正在生成發文內容...")
@@ -224,16 +242,14 @@ class LunaThreadsMonitor:
                             "created_at": datetime.now()
                         })
                         
-                        # 計算下次發文時間
-                        wait_seconds = self.time_controller.get_interval()
-                        next_time = self.time_controller.get_next_post_time()
+                        # 更新發文計數並計算下次發文時間
+                        await self.time_controller.wait_until_next_post()
                         
-                        self.logger.info("下次發文時間: %s (等待 %d 秒)", 
-                                        next_time.strftime("%Y-%m-%d %H:%M:%S"), 
-                                        wait_seconds)
-                        
-                        # 等待到下一次發文時間
-                        await asyncio.sleep(wait_seconds)
+                        # 顯示發文計劃資訊
+                        time_info = self.time_controller.get_current_time_info()
+                        self.logger.info("發文計劃: 今日已發文 %s，下次發文時間: %s", 
+                                        time_info["today_post_count"],
+                                        time_info["next_post_time"])
                     else:
                         self.logger.error("發文失敗")
                         # 失敗後等待一段時間再試
