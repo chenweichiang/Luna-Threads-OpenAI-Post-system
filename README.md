@@ -3,8 +3,8 @@
   <h1>ThreadsPoster - Threads 自動回覆與內容發布系統</h1>
   <p>🌟 由 Luna 提供智能社群互動體驗 🌟</p>
   
-  [![Version](https://img.shields.io/badge/version-1.2.1-blue.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
-  [![Last Updated](https://img.shields.io/badge/last%20updated-2025.04.02-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
+  [![Version](https://img.shields.io/badge/version-1.2.3-blue.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
+  [![Last Updated](https://img.shields.io/badge/last%20updated-2025.04.04-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system/blob/main/LICENSE)
   [![Author](https://img.shields.io/badge/author-Chiang%2C%20Chenwei-orange.svg)](https://github.com/chenweichiang)
 </div>
