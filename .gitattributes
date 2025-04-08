@@ -1,1 +1,56 @@
 *.png filter=lfs diff=lfs merge=lfs -text
+
+# 設定所有文件使用 LF 作為換行符
+* text=auto eol=lf
+
+# Python 源代碼
+*.py linguist-language=Python
+*.py linguist-detectable=true
+*.py linguist-documentation=false
+
+# 文檔檔案
+*.md linguist-documentation=true
+*.txt linguist-documentation=true
+
+# 配置檔案
+*.json linguist-language=JSON
+*.env* linguist-language=Properties
+
+# 標記這是一個 ThreadsPoster 自動發文系統專案
+*.py linguist-vendored=false
+*.py linguist-generated=false
+
+# Copilot 專案說明
+# ThreadsPoster 是一個自動化的 Threads 平台發文系統
+# 主要功能：
+# 1. 自動生成和發布內容
+# 2. 智能時間管理和排程
+# 3. 多樣化的說話模式管理
+# 4. AI 驅動的內容生成
+# 5. 完整的資料庫整合
+# 6. 性能監控和統計
+
+# 核心模組說明
+src/main.py linguist-language=Python
+src/monitor.py linguist-language=Python
+src/time_controller.py linguist-language=Python
+src/content_generator.py linguist-language=Python
+src/speaking_patterns.py linguist-language=Python
+src/threads_handler.py linguist-language=Python
+src/ai_handler.py linguist-language=Python
+src/database.py linguist-language=Python
+
+# 資料庫集合說明
+# - articles: 文章內容儲存
+# - posts: 發文歷史記錄
+# - personality_memories: AI 人設記憶
+# - speaking_patterns: 說話風格模式
+# - user_history: 用戶互動記錄
+
+# 開發規範
+# 1. 使用 Python 3.8+
+# 2. 遵循 PEP 8 代碼風格
+# 3. 必須包含完整的文檔字符串
+# 4. 實現適當的錯誤處理
+# 5. 使用非同步操作處理 I/O
+# 6. 實現性能監控和優化

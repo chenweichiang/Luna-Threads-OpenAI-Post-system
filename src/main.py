@@ -272,23 +272,52 @@ async def main():
 # 主程式入口點
 if __name__ == "__main__":
     try:
-        # 確保日誌目錄存在
-        os.makedirs("logs", exist_ok=True)
+        # 設定日誌
+        setup_logger(__name__)
+        logger = logging.getLogger(__name__)
+        logger.info("========== 啟動 ThreadsPoster ==========")
         
-        # 建立並啟動事件循環
+        # 創建事件循環
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        # 啟動系統
-        loop.run_until_complete(main())
-        loop.run_forever()
-    except KeyboardInterrupt:
-        logger.info("接收到使用者中斷，準備關閉系統...")
-    except Exception as e:
-        logger.critical("系統發生嚴重錯誤：%s", str(e), exc_info=True)
-    finally:
-        # 確保事件循環已關閉
-        if loop and not loop.is_closed():
+        # 創建應用實例
+        app = ThreadsPosterApp()
+        
+        # 初始化應用
+        if not loop.run_until_complete(app.initialize()):
+            logger.error("應用初始化失敗")
+            sys.exit(1)
+            
+        # 設定信號處理
+        def signal_handler(signum, frame):
+            logger.info(f"收到信號 {signum}，準備關閉應用...")
+            app.running = False
+            
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # 啟動應用
+        app.running = True
+        try:
+            # 運行監控器
+            loop.run_until_complete(app.monitor.run())
+        except Exception as e:
+            logger.error(f"運行時錯誤: {str(e)}")
+            sys.exit(1)
+        finally:
+            # 清理資源
+            app.running = False
+            loop.run_until_complete(app.monitor.cleanup())
             loop.close()
-        logger.info("事件循環已關閉，程式結束")
+            
+    except Exception as e:
+        logger.error(f"主程式錯誤: {str(e)}")
+        if loop:
+            loop.close()
+        sys.exit(1)
+    finally:
+        # 執行垃圾回收
+        gc.collect()
+        logger.info("========== ThreadsPoster 已關閉 ==========")
         sys.exit(0) 

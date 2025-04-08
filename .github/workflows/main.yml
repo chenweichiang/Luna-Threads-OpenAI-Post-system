@@ -198,158 +198,49 @@ jobs:
           import os
           import psutil
           
-          def check_memory_usage():
-              # 獲取最大允許的記憶體使用率
-              max_usage = float(os.getenv("MAX_MEMORY_USAGE", "80"))
-              
-              # 獲取當前記憶體使用情況
-              memory = psutil.virtual_memory()
-              current_usage = memory.percent
-              
-              print(f"當前記憶體使用率: {current_usage:.1f}% (最大允許: {max_usage:.1f}%)")
-              
-              # 如果超過最大值，退出
-              if current_usage > max_usage:
-                  print("警告: 記憶體使用率過高!")
-                  return False
-              
-              return True
+          # 獲取記憶體使用情況
+          memory = psutil.virtual_memory()
           
-          if __name__ == "__main__":
-              if not check_memory_usage():
-                  exit(1)
+          # 檢查記憶體使用是否超過限制
+          max_memory_usage = float(os.getenv("MAX_MEMORY_USAGE", "80"))
+          current_usage = memory.percent
+          
+          print(f"當前記憶體使用率: {current_usage}%")
+          print(f"記憶體使用限制: {max_memory_usage}%")
+          
+          if current_usage > max_memory_usage:
+              print(f"錯誤：記憶體使用率 ({current_usage}%) 超過限制 ({max_memory_usage}%)")
+              exit(1)
+          
+          print("記憶體使用檢查通過")
+          exit(0)
           EOF
           
-          # 運行記憶體檢查
+          # 運行檢查
           python check_memory.py
 
-      - name: 運行程式
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          PYTHONUNBUFFERED: 1
+      - name: 執行主程式
         run: |
-          # 創建超時監控腳本
-          cat > run_with_timeout.py << 'EOF'
-          """運行主程式並監控超時"""
-          import os
-          import sys
-          import time
-          import subprocess
-          import signal
-          import re
-          import datetime
-          import pytz
+          echo "開始執行主程式..."
+          # 設定 PYTHONPATH
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          # 啟用詳細的錯誤訊息
+          export PYTHONVERBOSE=1
+          # 設定更詳細的日誌層級
+          export LOG_LEVEL=DEBUG
+          # 執行主程式
+          cd src
+          python -u main.py 2>&1 | tee ../logs/main_output.log
+        env:
+          PYTHONUNBUFFERED: 1
 
-          # 設定超時時間
-          timeout = int(os.getenv("EXECUTION_TIMEOUT", "1200"))
-          timezone = os.getenv("TIMEZONE", "Asia/Taipei")
-          
-          # 檢查當前時間是否在發文時間範圍內
-          def is_posting_time():
-              now = datetime.datetime.now(pytz.timezone(timezone))
-              hour = now.hour
-              
-              # 從環境變數獲取發文時間範圍
-              posting_start = int(os.getenv("POSTING_HOURS_START", "20"))
-              posting_end = int(os.getenv("POSTING_HOURS_END", "26"))
-              
-              # 處理跨日的發文時間範圍
-              if posting_end > 24:
-                  end_hour = posting_end - 24
-                  if posting_start <= hour < 24 or 0 <= hour < end_hour:
-                      print(f"當前時間 {hour}:00 在發文時間範圍內 (晚上{posting_start}:00-凌晨{end_hour}:00)")
-                      return True
-              else:
-                  if posting_start <= hour < posting_end:
-                      print(f"當前時間 {hour}:00 在發文時間範圍內 ({posting_start}:00-{posting_end}:00)")
-                      return True
-                      
-              print(f"當前時間 {hour}:00 不在發文時間範圍內 (晚上{posting_start}:00-凌晨{posting_end-24 if posting_end > 24 else posting_end}:00)")
-              return False
-          
-          # 檢查今日發文次數是否已達上限
-          def check_post_count():
-              max_posts = int(os.getenv("MAX_POSTS_PER_DAY", "5"))
-              print(f"今日最大發文次數: {max_posts} (實際次數由系統內部控制為3-5次之間)")
-              return True
-          
-          # 檢查是否可以發文
-          if not is_posting_time():
-              print("不在發文時間範圍內，退出程式")
-              sys.exit(0)
-              
-          if not check_post_count():
-              print("今日發文可能已達上限，退出程式")
-              sys.exit(0)
-          
-          # 啟動主程式
-          print("符合發文條件，啟動主程式...")
-          process = subprocess.Popen(["python", "-m", "src.main"])
-          
-          start_time = time.time()
-          last_check = start_time
-          
-          try:
-              while process.poll() is None:
-                  # 檢查是否超時
-                  current_time = time.time()
-                  if current_time - start_time > timeout:
-                      print(f"程式執行超過 {timeout} 秒，強制終止")
-                      process.terminate()
-                      time.sleep(5)
-                      process.kill()
-                      sys.exit(1)
-                  
-                  # 每30秒檢查一次日誌
-                  if current_time - last_check >= 30:
-                      print(f"已運行 {int(current_time - start_time)} 秒...")
-                      last_check = current_time
-                      
-                      # 檢查是否已發文成功或出現錯誤
-                      try:
-                          if os.path.exists("logs/threads_poster.log"):
-                              with open("logs/threads_poster.log", "r", encoding="utf-8") as f:
-                                  content = f.read()
-                                  if "發文成功" in content:
-                                      print("檢測到發文成功，結束程式")
-                                      process.terminate()
-                                      time.sleep(5)
-                                      process.kill()
-                                      sys.exit(0)
-                                  
-                                  if "今日發文次數已達上限" in content or "不在允許發文範圍" in content:
-                                      print("檢測到發文限制消息，結束程式")
-                                      process.terminate()
-                                      time.sleep(5)
-                                      process.kill()
-                                      sys.exit(0)
-                                  
-                                  # 查找錯誤
-                                  errors = re.findall(r"(ERROR|CRITICAL).*", content)
-                                  if errors:
-                                      print("檢測到錯誤日誌：")
-                                      for error in errors[-5:]:  # 顯示最後5條錯誤
-                                          print(error)
-                      except Exception as e:
-                          print(f"檢查日誌時出錯: {e}")
-                  
-                  time.sleep(1)
-                  
-              # 正常結束
-              print("程式已完成執行")
-              sys.exit(0)
-              
-          except KeyboardInterrupt:
-              print("接收到中斷信號，終止程式")
-              process.terminate()
-              time.sleep(5)
-              process.kill()
-              sys.exit(1)
-          EOF
-          
-          # 運行監控腳本
-          pip install pytz
-          python run_with_timeout.py
+      - name: 上傳日誌檔案
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: logs/
+          retention-days: 5
 
       - name: 檢查日誌
         if: always()
@@ -376,14 +267,4 @@ jobs:
             ls -la
             echo "=== 日誌目錄內容(如果存在) ==="
             ls -la logs/ || echo "日誌目錄不存在"
-          fi
-
-      - name: 上傳日誌作為構件
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: threadsposter-logs-v1.2.1
-          path: |
-            logs/*.log
-            *.log
-          retention-days: 7 
+          fi 
