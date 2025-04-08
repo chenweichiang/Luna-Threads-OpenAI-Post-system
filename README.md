@@ -3,8 +3,8 @@
   <h1>ThreadsPoster - Threads 自動回覆與內容發布系統</h1>
   <p>🌟 由 Luna 提供智能社群互動體驗 🌟</p>
   
-  [![Version](https://img.shields.io/badge/version-1.2.3-blue.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
-  [![Last Updated](https://img.shields.io/badge/last%20updated-2025.04.04-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
+  [![Version](https://img.shields.io/badge/version-1.2.4-blue.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
+  [![Last Updated](https://img.shields.io/badge/last%20updated-2025.04.08-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system/blob/main/LICENSE)
   [![Author](https://img.shields.io/badge/author-Chiang%2C%20Chenwei-orange.svg)](https://github.com/chenweichiang)
 </div>
@@ -45,6 +45,7 @@ ThreadsPoster 是一個基於 Python 的自動化系統，用於在 Threads 平�
 ### ✅ 已完成功能
 - 基礎系統架構建立
 - OpenAI GPT-4 整合與內容生成
+- Quasar Alpha 模型支援與整合
 - MongoDB 最新版本資料庫整合
 - 自動發文系統與時間管理
 - 情感分析與回應系統
