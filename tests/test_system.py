@@ -9,10 +9,18 @@ import os
 import sys
 from datetime import datetime
 import pytz
+import pytest
+from dotenv import load_dotenv
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("test_system")
+
+# 添加專案根目錄到 Python 路徑
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# 載入環境變數
+load_dotenv()
 
 async def test_speaking_patterns():
     """測試說話模式模組"""
@@ -167,6 +175,52 @@ async def main():
     
     logger.info("所有測試完成")
 
+def test_environment_setup():
+    """測試環境設定是否正確"""
+    # 檢查必要的環境變數
+    assert os.getenv('OPENAI_PROJECT_API_KEY') is not None, "未設定 OPENAI_PROJECT_API_KEY"
+    assert os.getenv('MONGODB_URI') is not None, "未設定 MONGODB_URI"
+    assert os.getenv('THREADS_ACCESS_TOKEN') is not None, "未設定 THREADS_ACCESS_TOKEN"
+
+def test_python_version():
+    """測試 Python 版本是否符合要求"""
+    version = sys.version_info
+    assert version.major == 3 and version.minor >= 8, "Python 版本必須 >= 3.8"
+
+def test_dependencies():
+    """測試必要的套件是否已安裝"""
+    required_packages = [
+        'openai',
+        'pymongo',
+        'requests',
+        'python-dotenv',
+        'pytest'
+    ]
+    
+    import pkg_resources
+    installed_packages = {pkg.key for pkg in pkg_resources.working_set}
+    
+    for package in required_packages:
+        assert package in installed_packages, f"缺少必要的套件: {package}"
+
+def test_directory_structure():
+    """測試專案目錄結構是否完整"""
+    required_dirs = [
+        'src',
+        'logs',
+        'data',
+        'config',
+        'tests'
+    ]
+    
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for directory in required_dirs:
+        dir_path = os.path.join(project_root, directory)
+        assert os.path.isdir(dir_path), f"缺少必要的目錄: {directory}"
+
 if __name__ == "__main__":
     # 運行測試
-    asyncio.run(main()) 
+    asyncio.run(main())
+
+    # 執行 pytest
+    pytest.main([__file__, '-v']) 

@@ -89,21 +89,52 @@ Luna 是一個在 2025 年 AI 元年誕生的虛擬少女，她擁有人類般�
 
 ### 1. 安裝
 ```bash
+# 克隆專案
 git clone https://github.com/chenweichiang/Luna-Threads-OpenAI-Post-system.git
 cd Luna-Threads-OpenAI-Post-system
+
+# 建立虛擬環境
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# 或使用 
+# venv\Scripts\activate  # Windows
+
+# 安裝依賴
 pip install -r requirements.txt
 ```
 
 ### 2. 配置
 ```bash
-cp config/.env.example .env
-# 編輯 .env 文件，填入必要的 API 金鑰和設定
+# 複製環境變數範例檔案
+cp .env.example .env
+
+# 編輯 .env 文件，填入必要的設定：
+# 1. OpenAI API 金鑰
+# 2. Threads API 設定
+# 3. MongoDB 連線資訊
+# 4. 系統基本配置
 ```
 
-### 3. 運行
+### 3. 資料庫設定
 ```bash
-python -m src.main
+# 確保 MongoDB 服務正在運行
+# 建立必要的資料庫和集合
+# 詳細設定請參考 docs/INTEGRATION.md
 ```
+
+### 4. 運行
+```bash
+# 確保在專案根目錄
+python src/main.py
+
+# 檢查日誌
+tail -f logs/threads_poster.log
+```
+
+### 5. 驗證
+- 檢查 logs/threads_poster.log 確認系統正常運行
+- 確認 MongoDB 連線成功
+- 驗證 API 連線狀態
 
 ## 文檔
 - [CHANGELOG.md](docs/CHANGELOG.md) - 變更日誌
