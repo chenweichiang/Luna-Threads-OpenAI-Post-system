@@ -1,64 +1,38 @@
-# Python
+# 敏感信息和環境配置
+.env
+*.env
+.env.*
+
+# 日誌檔案
+logs/
+*.log
+
+# 資料庫檔案和備份
+data/backups/
+data/system_state.json
+data/system_state.json.backup
+
+# Python 快取檔案
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
 # 虛擬環境
 venv/
 env/
 ENV/
 
-# IDE
+# IDE 配置
 .idea/
 .vscode/
 *.swp
 *.swo
+
+# 個人系統設定
 .DS_Store
+Thumbs.db
 
-# 日誌
-logs/
-*.log
+# 用戶特定設定
+config/local.json
 
-# 環境變數
-.env
-.env.*
-!.env.example
-
-# 測試
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-
-# MongoDB
-*.mongodb
-
-# 憑證
-*.pem
-*.key
-*.crt
-*.cer
-
-# 其他
-*.bak
-*.tmp
-*.temp
-.cache/ .cursorrules
-.env
+# 注意：stable 目錄包含已開發好的穩定版本，需要上傳至 GitHub
