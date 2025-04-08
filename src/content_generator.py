@@ -27,9 +27,9 @@ import os
 import asyncio
 from datetime import datetime, timedelta
 import pytz
-from src.exceptions import AIError, ContentGeneratorError
-from src.performance_monitor import performance_monitor, track_performance
-from src.speaking_patterns import SpeakingPatterns
+from exceptions import AIError, ContentGeneratorError
+from performance_monitor import performance_monitor, track_performance
+from speaking_patterns import SpeakingPatterns
 from cachetools import TTLCache
 
 class ContentGenerator:

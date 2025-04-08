@@ -16,7 +16,7 @@ import sys
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pythonjsonlogger import jsonlogger
-from src.config import Config
+from config import Config
 from typing import Any, Dict
 
 class ColorFormatter(logging.Formatter):

@@ -17,7 +17,7 @@ import logging
 import aiohttp
 import asyncio
 from typing import Optional, Dict, Any
-from src.exceptions import ThreadsAPIError
+from exceptions import ThreadsAPIError
 
 class ThreadsAPI:
     """Threads API 介面類別"""

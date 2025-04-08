@@ -21,7 +21,7 @@ from functools import lru_cache
 import backoff
 from aiohttp import ClientTimeout
 from asyncio import Semaphore
-from src.performance_monitor import performance_monitor, track_performance
+from performance_monitor import performance_monitor, track_performance
 
 logger = logging.getLogger(__name__)
 

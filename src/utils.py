@@ -18,8 +18,8 @@ import re
 import pytz
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union, Tuple
-from src.config import Config
-from src.exceptions import ValidationError
+from config import Config
+from exceptions import ValidationError
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)

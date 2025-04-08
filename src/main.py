@@ -29,19 +29,19 @@ import pytz
 from datetime import datetime, timedelta
 import gc
 
-from src.config import Config
-from src.database import Database
-from src.db_handler import DatabaseHandler
-from src.ai_handler import AIHandler
-from src.threads_handler import ThreadsHandler
-from src.threads_api import ThreadsAPI
-from src.openai_api import OpenAIAPI
-from src.monitor import Monitor, LunaThreadsMonitor
-from src.time_controller import TimeController
-from src.content_generator import ContentGenerator
-from src.performance_monitor import performance_monitor, track_performance
-from src.speaking_patterns import SpeakingPatterns
-from src.logger import setup_logger
+from config import Config
+from database import Database
+from db_handler import DatabaseHandler
+from ai_handler import AIHandler
+from threads_handler import ThreadsHandler
+from threads_api import ThreadsAPI
+from openai_api import OpenAIAPI
+from monitor import Monitor, LunaThreadsMonitor
+from time_controller import TimeController
+from content_generator import ContentGenerator
+from performance_monitor import performance_monitor, track_performance
+from speaking_patterns import SpeakingPatterns
+from logger import setup_logger
 
 # 設定環境變數
 os.environ["PYTHONIOENCODING"] = "utf-8"

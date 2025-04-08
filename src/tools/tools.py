@@ -21,10 +21,10 @@ import asyncio
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(project_root)
 
-from src.config import Config
-from src.db_handler import DatabaseHandler
-from src.utils import check_latest_posts
-from src.tools.test_time_settings import test_settings
+from config import Config
+from db_handler import DatabaseHandler
+from utils import check_latest_posts
+from tools.test_time_settings import test_settings
 
 async def run_check_posts():
     """執行檢查最近文章功能"""

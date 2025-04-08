@@ -21,8 +21,8 @@ import aiohttp
 import pytz
 from datetime import datetime
 
-from src.threads_api import ThreadsAPI
-from src.performance_monitor import performance_monitor, track_performance
+from threads_api import ThreadsAPI
+from performance_monitor import performance_monitor, track_performance
 
 class ThreadsHandler:
     """Threads 處理器類別，負責管理與 Threads 平台的互動"""

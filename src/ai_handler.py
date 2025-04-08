@@ -28,11 +28,11 @@ import pytz
 import aiohttp
 from openai import AsyncOpenAI
 from cachetools import TTLCache
-from src.speaking_patterns import SpeakingPatterns
+from speaking_patterns import SpeakingPatterns
 
 # 導入性能監視器
 try:
-    from src.performance_monitor import performance_monitor, track_performance
+    from performance_monitor import performance_monitor, track_performance
 except ImportError:
     # 如果找不到性能監視器，創建一個簡單的替代函數
     def track_performance(name):

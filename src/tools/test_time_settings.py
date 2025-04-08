@@ -21,8 +21,8 @@ project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.append(project_root)
 
 from dotenv import load_dotenv
-from src.config import Config
-from src.time_controller import TimeController
+from config import Config
+from time_controller import TimeController
 
 def test_settings():
     """測試各個類的時間設定"""

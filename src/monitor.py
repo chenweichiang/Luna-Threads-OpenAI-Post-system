@@ -21,12 +21,12 @@ import signal
 from datetime import datetime
 from typing import Optional
 
-from src.database import Database
-from src.db_handler import DatabaseHandler
-from src.threads_handler import ThreadsHandler
-from src.content_generator import ContentGenerator
-from src.time_controller import TimeController
-from src.ai_handler import AIHandler
+from database import Database
+from db_handler import DatabaseHandler
+from threads_handler import ThreadsHandler
+from content_generator import ContentGenerator
+from time_controller import TimeController
+from ai_handler import AIHandler
 
 class Monitor:
     """監控器類別"""
