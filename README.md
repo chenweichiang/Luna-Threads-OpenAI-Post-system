@@ -736,3 +736,9 @@ ThreadsPosterは、Threadsプラットフォーム上でインテリジェント
    - オーディエンスに合わせてタイムゾーンと投稿ウィンドウを設定
 
 完全なセットアップ手順については、以下のGitHub Actionsセットアップセクションを参照してください。
+
+## 文檔
+- [CHANGELOG.md](docs/CHANGELOG.md) - 變更日誌
+- [CONTRIBUTING.md](docs/CONTRIBUTING.md) - 貢獻指南
+- [INTEGRATION.md](docs/INTEGRATION.md) - 系統整合指南
+- [LICENSE](LICENSE) - 授權文件
