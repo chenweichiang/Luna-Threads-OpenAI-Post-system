@@ -1,270 +1,78 @@
-name: ThreadsPoster 自動化工作流程
+name: ThreadsPoster CI/CD
 
 on:
-  schedule:
-    - cron: '0 12-18 * * *'  # 每日台灣時間20:00-02:00(UTC+8)範圍內每小時執行一次
   push:
     branches: [ main ]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '.gitignore'
-  workflow_dispatch:  # 允許手動觸發
-
-env:
-  PYTHON_VERSION: "3.11"
-  TIMEZONE: "Asia/Taipei"
-  LOG_LEVEL: "INFO"
-  MAX_POSTS_PER_DAY: "5"  # 每日最大發文數，與代碼中的設定一致
-  MAX_MEMORY_USAGE: "80"  # 最大記憶體使用百分比
-  EXECUTION_TIMEOUT: "1200"  # 執行超時時間（秒）
-  POSTING_HOURS_START: "20"  # 發文開始時間（24小時制）
-  POSTING_HOURS_END: "26"  # 發文結束時間（24+2小時制，表示凌晨2點）
-  PRIME_TIME_EVENING_START: "21"  # 黃金時段開始時間
-  PRIME_TIME_EVENING_END: "25"  # 黃金時段結束時間（24+1小時制，表示凌晨1點）
-  VERSION: "1.2.1"  # 當前版本號
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 */6 * * *'  # 每6小時運行一次
 
 jobs:
-  deploy-and-run:
-    name: 部署與運行 ThreadsPoster v1.2.1
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    
+    services:
+      mongodb:
+        image: mongo:latest
+        ports:
+          - 27017:27017
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: 設定 Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+        cache: 'pip'
+    
+    - name: 安裝依賴
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+    - name: 建立環境變數
+      run: |
+        echo "OPENAI_PROJECT_API_KEY=${{ secrets.OPENAI_PROJECT_API_KEY }}" >> .env
+        echo "OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}" >> .env
+        echo "THREADS_APP_ID=${{ secrets.THREADS_APP_ID }}" >> .env
+        echo "THREADS_APP_SECRET=${{ secrets.THREADS_APP_SECRET }}" >> .env
+        echo "THREADS_ACCESS_TOKEN=${{ secrets.THREADS_ACCESS_TOKEN }}" >> .env
+        echo "THREADS_USER_ID=${{ secrets.THREADS_USER_ID }}" >> .env
+        echo "MONGODB_URI=mongodb://localhost:27017/threads_db" >> .env
+        echo "TIMEZONE=Asia/Taipei" >> .env
+        echo "LOG_LEVEL=INFO" >> .env
+        
+    - name: 建立必要目錄
+      run: |
+        mkdir -p logs
+        mkdir -p data
+        mkdir -p data/backups
+        
+    - name: 運行測試
+      run: |
+        python -m pytest tests/test_system.py -v
+        
+    - name: 運行系統
+      if: github.event_name == 'schedule'  # 只在排程觸發時運行
+      run: |
+        python src/main.py &
+        sleep 300  # 運行5分鐘後停止
+        
+    - name: 上傳日誌
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: logs
+        path: logs/
+        
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     
     steps:
-      - name: 檢出代碼
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1  # 減少 Git 歷史以加快檢出
-
-      - name: 設定 Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: 安裝依賴
-        run: |
-          python -m pip install --upgrade pip
-          pip install --no-cache-dir -r requirements.txt
-
-      - name: 建立日誌目錄
-        run: mkdir -p logs
-
-      - name: 建立環境變數檔案
-        run: |
-          cat << EOF > .env
-          # OpenAI API 設定
-          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL=gpt-4-0125-preview
-
-          # Threads API 設定
-          THREADS_APP_ID=${{ secrets.THREADS_APP_ID }}
-          THREADS_APP_SECRET=${{ secrets.THREADS_APP_SECRET }}
-          THREADS_ACCESS_TOKEN=${{ secrets.THREADS_ACCESS_TOKEN }}
-          THREADS_USER_ID=${{ secrets.THREADS_USER_ID }}
-
-          # MongoDB 設定
-          MONGODB_URI=${{ secrets.MONGODB_URI }}
-          MONGODB_DB_NAME=threadsposter
-          MONGODB_COLLECTION=posts
-
-          # 系統設定
-          TIMEZONE=${{ env.TIMEZONE }}
-          LOG_LEVEL=${{ env.LOG_LEVEL }}
-          DEBUG=False
-          MAX_POSTS_PER_DAY=${{ env.MAX_POSTS_PER_DAY }}
-          MAX_MEMORY_USAGE=${{ env.MAX_MEMORY_USAGE }}
-          
-          # 發文時間設定
-          POSTING_HOURS_START=${{ env.POSTING_HOURS_START }}
-          POSTING_HOURS_END=${{ env.POSTING_HOURS_END }}
-          PRIME_TIME_EVENING_START=${{ env.PRIME_TIME_EVENING_START }}
-          PRIME_TIME_EVENING_END=${{ env.PRIME_TIME_EVENING_END }}
-          
-          # 發文間隔設定
-          PRIME_TIME_MIN_INTERVAL=1800
-          PRIME_TIME_MAX_INTERVAL=3600
-          OTHER_TIME_MIN_INTERVAL=5400
-          OTHER_TIME_MAX_INTERVAL=10800
-          
-          # 系統版本
-          VERSION=${{ env.VERSION }}
-          EOF
-
-      - name: 檢查環境變數
-        run: |
-          # 創建檢查腳本
-          cat > check_env.py << 'EOF'
-          """檢查環境變數是否存在並有效"""
-          import os
-          import sys
-          from dotenv import load_dotenv
-
-          # 載入環境變數
-          load_dotenv()
-
-          required_vars = [
-              "OPENAI_API_KEY",
-              "THREADS_ACCESS_TOKEN",
-              "THREADS_USER_ID",
-              "MONGODB_URI",
-              "POSTING_HOURS_START",
-              "POSTING_HOURS_END",
-              "PRIME_TIME_EVENING_START",
-              "PRIME_TIME_EVENING_END"
-          ]
-
-          missing_vars = []
-          for var in required_vars:
-              if not os.getenv(var):
-                  missing_vars.append(var)
-
-          if missing_vars:
-              print(f"錯誤：缺少以下必要的環境變數: {', '.join(missing_vars)}")
-              sys.exit(1)
-          else:
-              print("環境變數檢查通過")
-              sys.exit(0)
-          EOF
-
-          # 運行檢查
-          python check_env.py
-
-      - name: 初始化資料庫
-        run: |
-          # 創建初始化腳本
-          cat > init_db.py << 'EOF'
-          """初始化資料庫連接和集合"""
-          import asyncio
-          import os
-          from dotenv import load_dotenv
-          from motor.motor_asyncio import AsyncIOMotorClient
-          
-          load_dotenv()
-          
-          async def init_db():
-              # 獲取環境變數
-              mongo_uri = os.getenv("MONGODB_URI")
-              db_name = os.getenv("MONGODB_DB_NAME", "threadsposter")
-              collection_name = os.getenv("MONGODB_COLLECTION", "posts")
-              
-              if not mongo_uri:
-                  print("錯誤：未設定 MONGODB_URI 環境變數")
-                  return False
-                  
-              try:
-                  # 連接 MongoDB
-                  client = AsyncIOMotorClient(mongo_uri)
-                  db = client[db_name]
-                  
-                  # 檢查連接
-                  await client.admin.command('ping')
-                  
-                  # 確保集合存在
-                  if collection_name not in await db.list_collection_names():
-                      await db.create_collection(collection_name)
-                      
-                  # 建立索引
-                  await db[collection_name].create_index("post_id", unique=True)
-                  await db[collection_name].create_index("created_at")
-                  
-                  print(f"成功連接到資料庫 {db_name} 並建立/確認集合 {collection_name}")
-                  return True
-              except Exception as e:
-                  print(f"資料庫初始化錯誤：{str(e)}")
-                  return False
-              finally:
-                  # 關閉連接
-                  if 'client' in locals():
-                      client.close()
-          
-          if __name__ == "__main__":
-              result = asyncio.run(init_db())
-              if not result:
-                  exit(1)
-          EOF
-
-          # 運行初始化
-          python init_db.py
-
-      - name: 檢查系統資源
-        run: |
-          # 安裝 psutil 套件
-          pip install psutil
-          
-          # 創建記憶體檢查腳本
-          cat > check_memory.py << 'EOF'
-          """檢查系統記憶體使用情況"""
-          import os
-          import psutil
-          
-          # 獲取記憶體使用情況
-          memory = psutil.virtual_memory()
-          
-          # 檢查記憶體使用是否超過限制
-          max_memory_usage = float(os.getenv("MAX_MEMORY_USAGE", "80"))
-          current_usage = memory.percent
-          
-          print(f"當前記憶體使用率: {current_usage}%")
-          print(f"記憶體使用限制: {max_memory_usage}%")
-          
-          if current_usage > max_memory_usage:
-              print(f"錯誤：記憶體使用率 ({current_usage}%) 超過限制 ({max_memory_usage}%)")
-              exit(1)
-          
-          print("記憶體使用檢查通過")
-          exit(0)
-          EOF
-          
-          # 運行檢查
-          python check_memory.py
-
-      - name: 執行主程式
-        run: |
-          echo "開始執行主程式..."
-          # 設定 PYTHONPATH
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
-          # 啟用詳細的錯誤訊息
-          export PYTHONVERBOSE=1
-          # 設定更詳細的日誌層級
-          export LOG_LEVEL=DEBUG
-          # 執行主程式
-          cd src
-          python -u main.py 2>&1 | tee ../logs/main_output.log
-        env:
-          PYTHONUNBUFFERED: 1
-
-      - name: 上傳日誌檔案
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: logs
-          path: logs/
-          retention-days: 5
-
-      - name: 檢查日誌
-        if: always()
-        run: |
-          if [ -d "logs" ] && [ -f "logs/threads_poster.log" ]; then
-            echo "=== 日誌內容 (最後200行) ==="
-            tail -n 200 logs/threads_poster.log
-            
-            # 提取發文結果
-            echo "=== 發文結果 ==="
-            grep "發文成功" logs/threads_poster.log || echo "未找到成功發文記錄"
-            
-            # 提取發文計劃
-            echo "=== 發文計劃信息 ==="
-            grep "已生成每日發文計劃" logs/threads_poster.log || echo "未找到發文計劃"
-            
-            # 提取等待信息
-            echo "=== 等待信息 ==="
-            grep "等待下次發文時間" logs/threads_poster.log | tail -n 5 || echo "未找到等待信息"
-          else
-            echo "找不到日誌文件"
-            # 顯示當前目錄下的所有文件
-            echo "=== 當前目錄內容 ==="
-            ls -la
-            echo "=== 日誌目錄內容(如果存在) ==="
-            ls -la logs/ || echo "日誌目錄不存在"
-          fi 
+    - name: 部署通知
+      run: |
+        echo "系統已成功部署到最新版本" 

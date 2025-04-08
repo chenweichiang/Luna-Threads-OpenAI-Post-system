@@ -1,38 +1,57 @@
-# 敏感信息和環境配置
-.env
-*.env
-.env.*
-
-# 日誌檔案
-logs/
-*.log
-
-# 資料庫檔案和備份
-data/backups/
-data/system_state.json
-data/system_state.json.backup
-
-# Python 快取檔案
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # 虛擬環境
 venv/
-env/
 ENV/
+env/
+.env
 
-# IDE 配置
+# 日誌和資料
+logs/
+*.log
+data/
+*.db
+
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-
-# 個人系統設定
 .DS_Store
-Thumbs.db
 
-# 用戶特定設定
-config/local.json
+# 測試
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
 
-# 注意：stable 目錄包含已開發好的穩定版本，需要上傳至 GitHub
+# 系統特定
+*.bak
+*.tmp
+*~
+
+# 敏感資訊
+.env
+.env.*
+!.env.example
+config/secrets.yaml
